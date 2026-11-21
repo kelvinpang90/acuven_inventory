@@ -1,0 +1,10 @@
+{
+  "order_ref": "web-order-001",
+  "lines": [
+    {
+      "line_ref": "line-001",
+      "sku_id": "sku-001",
+      "quantity": 1
+    }
+  ]
+}

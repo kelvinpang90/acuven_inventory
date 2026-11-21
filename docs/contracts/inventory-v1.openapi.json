@@ -1,0 +1,3656 @@
+{
+  "openapi": "3.1.1",
+  "info": {
+    "title": "Acuven Inventory Shop Service API",
+    "version": "1.0.0-draft.2",
+    "description": "Unimplemented design contract. No public server is configured. Set the validated deployment base URL explicitly. Document version 1.0 is separate from API version."
+  },
+  "jsonSchemaDialect": "https://json-schema.org/draft/2020-12/schema",
+  "x-implementation-status": "not-implemented",
+  "x-required-transport": "HTTPS",
+  "x-resource-limits": {
+    "max_request_bytes": 131072,
+    "max_lines": 100
+  },
+  "x-authorization": "HTTP bearer with application-enforced connection/environment/object/action scope checks; not OAuth scopes.",
+  "tags": [
+    {
+      "name": "Setup"
+    },
+    {
+      "name": "Availability"
+    },
+    {
+      "name": "Reservations"
+    },
+    {
+      "name": "Events"
+    }
+  ],
+  "paths": {
+    "/internal/v1/connection": {
+      "get": {
+        "operationId": "getConnection",
+        "tags": [
+          "Setup"
+        ],
+        "summary": "Read own connection, scopes and verified capabilities",
+        "description": "Design contract only; not implemented. Connection and environment are derived from authenticated service identity. Every referenced object is authorization checked. Tenant, pool, location, Core instance and module authorization are verified server-side. Quantity writes delegate to the unique Core ledger.",
+        "parameters": [
+          {
+            "name": "X-Request-ID",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9._:-]+$"
+            }
+          }
+        ],
+        "security": [
+          {
+            "serviceBearer": []
+          }
+        ],
+        "x-required-scopes": [
+          "connection:read"
+        ],
+        "responses": {
+          "200": {
+            "description": "Own connection metadata",
+            "headers": {
+              "X-Request-ID": {
+                "schema": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "pattern": "^[A-Za-z0-9._:-]+$"
+                }
+              },
+              "Idempotency-Replayed": {
+                "description": "Present with true only for a replayed write result.",
+                "schema": {
+                  "type": "boolean"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectionResponse"
+                },
+                "examples": {
+                  "Connection": {
+                    "$ref": "#/components/examples/Connection"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, expired or revoked service credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Identity is valid but action/scope or environment is forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Object not found within the authenticated connection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Business conflict, capability unavailable, or operation in progress",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds before retrying the same business operation; actual delay set by runtime policy.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Request exceeds size limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Schema or reference validation failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate or concurrency budget exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds before retrying the same business operation; actual delay set by runtime policy.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error; query and retry same references if result is unknown",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable; do not assume previous writes failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/v1/mappings": {
+      "get": {
+        "operationId": "listMappings",
+        "tags": [
+          "Setup"
+        ],
+        "summary": "List own confirmed SKU mappings",
+        "description": "Design contract only; not implemented. Connection and environment are derived from authenticated service identity. Every referenced object is authorization checked. external_product_id and external_variant_id filters must be supplied together. Cursor is opaque and bound to connection, mapping revision and filters; stale revision requires restarting pagination. Tenant, pool, location, Core instance and module authorization are verified server-side. Quantity writes delegate to the unique Core ledger.",
+        "parameters": [
+          {
+            "name": "X-Request-ID",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9._:-]+$"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 100
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 2048
+            }
+          },
+          {
+            "name": "external_product_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9._:-]+$"
+            }
+          },
+          {
+            "name": "external_variant_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9._:-]+$"
+            }
+          }
+        ],
+        "security": [
+          {
+            "serviceBearer": []
+          }
+        ],
+        "x-required-scopes": [
+          "mapping:read"
+        ],
+        "responses": {
+          "200": {
+            "description": "Confirmed mappings for this connection only",
+            "headers": {
+              "X-Request-ID": {
+                "schema": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "pattern": "^[A-Za-z0-9._:-]+$"
+                }
+              },
+              "Idempotency-Replayed": {
+                "description": "Present with true only for a replayed write result.",
+                "schema": {
+                  "type": "boolean"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MappingPageResponse"
+                },
+                "examples": {
+                  "Mappings": {
+                    "$ref": "#/components/examples/Mappings"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, expired or revoked service credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Identity is valid but action/scope or environment is forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Object not found within the authenticated connection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Business conflict, capability unavailable, or operation in progress",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds before retrying the same business operation; actual delay set by runtime policy.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Request exceeds size limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Schema or reference validation failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate or concurrency budget exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds before retrying the same business operation; actual delay set by runtime policy.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error; query and retry same references if result is unknown",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable; do not assume previous writes failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/v1/availability": {
+      "get": {
+        "operationId": "getAvailability",
+        "tags": [
+          "Availability"
+        ],
+        "summary": "Read own available quantities",
+        "description": "Design contract only; not implemented. Connection and environment are derived from authenticated service identity. Every referenced object is authorization checked. Tenant, pool, location, Core instance and module authorization are verified server-side. Quantity writes delegate to the unique Core ledger.",
+        "parameters": [
+          {
+            "name": "X-Request-ID",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9._:-]+$"
+            }
+          },
+          {
+            "name": "sku_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128,
+                "pattern": "^[A-Za-z0-9._:-]+$"
+              },
+              "minItems": 1,
+              "maxItems": 100,
+              "uniqueItems": true
+            },
+            "style": "form",
+            "explode": true
+          }
+        ],
+        "security": [
+          {
+            "serviceBearer": []
+          }
+        ],
+        "x-required-scopes": [
+          "availability:read"
+        ],
+        "responses": {
+          "200": {
+            "description": "Unknown/review states have null quantities",
+            "headers": {
+              "X-Request-ID": {
+                "schema": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "pattern": "^[A-Za-z0-9._:-]+$"
+                }
+              },
+              "Idempotency-Replayed": {
+                "description": "Present with true only for a replayed write result.",
+                "schema": {
+                  "type": "boolean"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AvailabilityResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, expired or revoked service credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Identity is valid but action/scope or environment is forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Object not found within the authenticated connection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Business conflict, capability unavailable, or operation in progress",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds before retrying the same business operation; actual delay set by runtime policy.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Request exceeds size limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Schema or reference validation failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate or concurrency budget exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds before retrying the same business operation; actual delay set by runtime policy.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error; query and retry same references if result is unknown",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable; do not assume previous writes failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/v1/availability-status": {
+      "get": {
+        "operationId": "getAvailabilityStatus",
+        "tags": [
+          "Availability"
+        ],
+        "summary": "Read status only without quantities",
+        "description": "Design contract only; not implemented. Connection and environment are derived from authenticated service identity. Every referenced object is authorization checked. Tenant, pool, location, Core instance and module authorization are verified server-side. Quantity writes delegate to the unique Core ledger.",
+        "parameters": [
+          {
+            "name": "X-Request-ID",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9._:-]+$"
+            }
+          },
+          {
+            "name": "sku_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128,
+                "pattern": "^[A-Za-z0-9._:-]+$"
+              },
+              "minItems": 1,
+              "maxItems": 100,
+              "uniqueItems": true
+            },
+            "style": "form",
+            "explode": true
+          }
+        ],
+        "security": [
+          {
+            "serviceBearer": []
+          }
+        ],
+        "x-required-scopes": [
+          "availability:status"
+        ],
+        "responses": {
+          "200": {
+            "description": "No quantities, balances or versions",
+            "headers": {
+              "X-Request-ID": {
+                "schema": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "pattern": "^[A-Za-z0-9._:-]+$"
+                }
+              },
+              "Idempotency-Replayed": {
+                "description": "Present with true only for a replayed write result.",
+                "schema": {
+                  "type": "boolean"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AvailabilityStatusResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, expired or revoked service credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Identity is valid but action/scope or environment is forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Object not found within the authenticated connection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Business conflict, capability unavailable, or operation in progress",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds before retrying the same business operation; actual delay set by runtime policy.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Request exceeds size limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Schema or reference validation failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate or concurrency budget exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds before retrying the same business operation; actual delay set by runtime policy.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error; query and retry same references if result is unknown",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable; do not assume previous writes failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/v1/reservations": {
+      "post": {
+        "operationId": "createReservation",
+        "tags": [
+          "Reservations"
+        ],
+        "summary": "Reserve all order lines atomically for thirty minutes",
+        "description": "Design contract only; not implemented. Connection and environment are derived from authenticated service identity. Every referenced object is authorization checked. Tenant, pool, location, Core instance and module authorization are verified server-side. Quantity writes delegate to the unique Core ledger.",
+        "parameters": [
+          {
+            "name": "X-Request-ID",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9._:-]+$"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9._:-]+$"
+            }
+          }
+        ],
+        "security": [
+          {
+            "serviceBearer": []
+          }
+        ],
+        "x-required-scopes": [
+          "reservation:write"
+        ],
+        "responses": {
+          "201": {
+            "description": "New or replayed original reservation result",
+            "headers": {
+              "X-Request-ID": {
+                "schema": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "pattern": "^[A-Za-z0-9._:-]+$"
+                }
+              },
+              "Idempotency-Replayed": {
+                "description": "Present with true only for a replayed write result.",
+                "schema": {
+                  "type": "boolean"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReservationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, expired or revoked service credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Identity is valid but action/scope or environment is forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Object not found within the authenticated connection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Business conflict, capability unavailable, or operation in progress",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds before retrying the same business operation; actual delay set by runtime policy.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Request exceeds size limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Schema or reference validation failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate or concurrency budget exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds before retrying the same business operation; actual delay set by runtime policy.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error; query and retry same references if result is unknown",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable; do not assume previous writes failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateReservation"
+              },
+              "examples": {
+                "CreateReservation": {
+                  "$ref": "#/components/examples/CreateReservation"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "operationId": "findReservationByOrder",
+        "tags": [
+          "Reservations"
+        ],
+        "summary": "Find latest reservation by stable order reference",
+        "description": "Design contract only; not implemented. Connection and environment are derived from authenticated service identity. Every referenced object is authorization checked. Tenant, pool, location, Core instance and module authorization are verified server-side. Quantity writes delegate to the unique Core ledger.",
+        "parameters": [
+          {
+            "name": "X-Request-ID",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9._:-]+$"
+            }
+          },
+          {
+            "name": "order_ref",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9._:-]+$"
+            }
+          }
+        ],
+        "security": [
+          {
+            "serviceBearer": []
+          }
+        ],
+        "x-required-scopes": [
+          "reservation:read"
+        ],
+        "responses": {
+          "200": {
+            "description": "Latest state after expiration check",
+            "headers": {
+              "X-Request-ID": {
+                "schema": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "pattern": "^[A-Za-z0-9._:-]+$"
+                }
+              },
+              "Idempotency-Replayed": {
+                "description": "Present with true only for a replayed write result.",
+                "schema": {
+                  "type": "boolean"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReservationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, expired or revoked service credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Identity is valid but action/scope or environment is forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Object not found within the authenticated connection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Business conflict, capability unavailable, or operation in progress",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds before retrying the same business operation; actual delay set by runtime policy.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Request exceeds size limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Schema or reference validation failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate or concurrency budget exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds before retrying the same business operation; actual delay set by runtime policy.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error; query and retry same references if result is unknown",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable; do not assume previous writes failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/v1/reservations/{reservation_id}": {
+      "get": {
+        "operationId": "getReservation",
+        "tags": [
+          "Reservations"
+        ],
+        "summary": "Read latest reservation state",
+        "description": "Design contract only; not implemented. Connection and environment are derived from authenticated service identity. Every referenced object is authorization checked. Tenant, pool, location, Core instance and module authorization are verified server-side. Quantity writes delegate to the unique Core ledger.",
+        "parameters": [
+          {
+            "name": "X-Request-ID",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9._:-]+$"
+            }
+          },
+          {
+            "name": "reservation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9._:-]+$"
+            }
+          }
+        ],
+        "security": [
+          {
+            "serviceBearer": []
+          }
+        ],
+        "x-required-scopes": [
+          "reservation:read"
+        ],
+        "responses": {
+          "200": {
+            "description": "Latest state after expiration check",
+            "headers": {
+              "X-Request-ID": {
+                "schema": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "pattern": "^[A-Za-z0-9._:-]+$"
+                }
+              },
+              "Idempotency-Replayed": {
+                "description": "Present with true only for a replayed write result.",
+                "schema": {
+                  "type": "boolean"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReservationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, expired or revoked service credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Identity is valid but action/scope or environment is forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Object not found within the authenticated connection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Business conflict, capability unavailable, or operation in progress",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds before retrying the same business operation; actual delay set by runtime policy.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Request exceeds size limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Schema or reference validation failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate or concurrency budget exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds before retrying the same business operation; actual delay set by runtime policy.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error; query and retry same references if result is unknown",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable; do not assume previous writes failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/v1/reservations/{reservation_id}/release": {
+      "post": {
+        "operationId": "releaseReservation",
+        "tags": [
+          "Reservations"
+        ],
+        "summary": "Release an unpaid reservation without restoring it twice",
+        "description": "Design contract only; not implemented. Connection and environment are derived from authenticated service identity. Every referenced object is authorization checked. Tenant, pool, location, Core instance and module authorization are verified server-side. Quantity writes delegate to the unique Core ledger.",
+        "parameters": [
+          {
+            "name": "X-Request-ID",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9._:-]+$"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9._:-]+$"
+            }
+          },
+          {
+            "name": "reservation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9._:-]+$"
+            }
+          }
+        ],
+        "security": [
+          {
+            "serviceBearer": []
+          }
+        ],
+        "x-required-scopes": [
+          "reservation:write"
+        ],
+        "responses": {
+          "200": {
+            "description": "Release result; committed reservations cannot be released",
+            "headers": {
+              "X-Request-ID": {
+                "schema": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "pattern": "^[A-Za-z0-9._:-]+$"
+                }
+              },
+              "Idempotency-Replayed": {
+                "description": "Present with true only for a replayed write result.",
+                "schema": {
+                  "type": "boolean"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReservationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, expired or revoked service credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Identity is valid but action/scope or environment is forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Object not found within the authenticated connection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Business conflict, capability unavailable, or operation in progress",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds before retrying the same business operation; actual delay set by runtime policy.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Request exceeds size limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Schema or reference validation failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate or concurrency budget exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds before retrying the same business operation; actual delay set by runtime policy.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error; query and retry same references if result is unknown",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable; do not assume previous writes failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReleaseReservation"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/v1/inventory-events": {
+      "post": {
+        "operationId": "submitInventoryEvent",
+        "tags": [
+          "Events"
+        ],
+        "summary": "Persist a minimal inventory fact for asynchronous processing",
+        "description": "Design contract only; not implemented. Connection and environment are derived from authenticated service identity. Every referenced object is authorization checked. Authorization depends on the action; x-required-scopes-by-action MUST be enforced by application code. No generic event:write grant exists. Tenant, pool, location, Core instance and module authorization are verified server-side. Quantity writes delegate to the unique Core ledger.",
+        "parameters": [
+          {
+            "name": "X-Request-ID",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9._:-]+$"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9._:-]+$"
+            }
+          }
+        ],
+        "security": [
+          {
+            "serviceBearer": []
+          }
+        ],
+        "x-required-scopes": [],
+        "responses": {
+          "202": {
+            "description": "Persisted receipt only; not stock confirmation",
+            "headers": {
+              "X-Request-ID": {
+                "schema": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "pattern": "^[A-Za-z0-9._:-]+$"
+                }
+              },
+              "Idempotency-Replayed": {
+                "description": "Present with true only for a replayed write result.",
+                "schema": {
+                  "type": "boolean"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventReceiptResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, expired or revoked service credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Identity is valid but action/scope or environment is forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Object not found within the authenticated connection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Business conflict, capability unavailable, or operation in progress",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds before retrying the same business operation; actual delay set by runtime policy.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Request exceeds size limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Schema or reference validation failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate or concurrency budget exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds before retrying the same business operation; actual delay set by runtime policy.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error; query and retry same references if result is unknown",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable; do not assume previous writes failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InventoryEvent"
+              },
+              "examples": {
+                "SaleConfirmed": {
+                  "$ref": "#/components/examples/SaleConfirmed"
+                }
+              }
+            }
+          }
+        },
+        "x-required-scopes-by-action": {
+          "sale_confirmed": [
+            "event:sale:write"
+          ],
+          "sale_cancelled": [
+            "event:cancel:write"
+          ],
+          "dispatched": [
+            "event:dispatch:write"
+          ],
+          "return_received": [
+            "event:return:write"
+          ]
+        }
+      },
+      "get": {
+        "operationId": "findEventByReference",
+        "tags": [
+          "Events"
+        ],
+        "summary": "Find current processing result by stable event reference",
+        "description": "Design contract only; not implemented. Connection and environment are derived from authenticated service identity. Every referenced object is authorization checked. Tenant, pool, location, Core instance and module authorization are verified server-side. Quantity writes delegate to the unique Core ledger.",
+        "parameters": [
+          {
+            "name": "X-Request-ID",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9._:-]+$"
+            }
+          },
+          {
+            "name": "event_ref",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9._:-]+$"
+            }
+          }
+        ],
+        "security": [
+          {
+            "serviceBearer": []
+          }
+        ],
+        "x-required-scopes": [
+          "event:read"
+        ],
+        "responses": {
+          "200": {
+            "description": "Applied flag and review status must be inspected",
+            "headers": {
+              "X-Request-ID": {
+                "schema": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "pattern": "^[A-Za-z0-9._:-]+$"
+                }
+              },
+              "Idempotency-Replayed": {
+                "description": "Present with true only for a replayed write result.",
+                "schema": {
+                  "type": "boolean"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventResultResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, expired or revoked service credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Identity is valid but action/scope or environment is forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Object not found within the authenticated connection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Business conflict, capability unavailable, or operation in progress",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds before retrying the same business operation; actual delay set by runtime policy.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Request exceeds size limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Schema or reference validation failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate or concurrency budget exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds before retrying the same business operation; actual delay set by runtime policy.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error; query and retry same references if result is unknown",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable; do not assume previous writes failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/internal/v1/inventory-events/{event_id}": {
+      "get": {
+        "operationId": "getInventoryEvent",
+        "tags": [
+          "Events"
+        ],
+        "summary": "Read current processing result",
+        "description": "Design contract only; not implemented. Connection and environment are derived from authenticated service identity. Every referenced object is authorization checked. Tenant, pool, location, Core instance and module authorization are verified server-side. Quantity writes delegate to the unique Core ledger.",
+        "parameters": [
+          {
+            "name": "X-Request-ID",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9._:-]+$"
+            }
+          },
+          {
+            "name": "event_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9._:-]+$"
+            }
+          }
+        ],
+        "security": [
+          {
+            "serviceBearer": []
+          }
+        ],
+        "x-required-scopes": [
+          "event:read"
+        ],
+        "responses": {
+          "200": {
+            "description": "Applied flag and review status must be inspected",
+            "headers": {
+              "X-Request-ID": {
+                "schema": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128,
+                  "pattern": "^[A-Za-z0-9._:-]+$"
+                }
+              },
+              "Idempotency-Replayed": {
+                "description": "Present with true only for a replayed write result.",
+                "schema": {
+                  "type": "boolean"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventResultResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, expired or revoked service credential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Identity is valid but action/scope or environment is forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Object not found within the authenticated connection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Business conflict, capability unavailable, or operation in progress",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds before retrying the same business operation; actual delay set by runtime policy.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Request exceeds size limit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Schema or reference validation failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate or concurrency budget exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds before retrying the same business operation; actual delay set by runtime policy.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error; query and retry same references if result is unknown",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unavailable; do not assume previous writes failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "serviceBearer": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Opaque server-held credential; connection/environment bound. Never send in URLs or expose in browser."
+      }
+    },
+    "schemas": {
+      "Reference": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128,
+        "pattern": "^[A-Za-z0-9._:-]+$"
+      },
+      "UtcTime": {
+        "type": "string",
+        "format": "date-time",
+        "pattern": "Z$"
+      },
+      "Quantity": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 2147483647
+      },
+      "OrderLine": {
+        "type": "object",
+        "properties": {
+          "line_ref": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9._:-]+$"
+          },
+          "sku_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9._:-]+$",
+            "description": "Stable variant ID from the shared product identity catalog, authorized for this tenant/pool/connection."
+          },
+          "quantity": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 2147483647
+          }
+        },
+        "required": [
+          "line_ref",
+          "sku_id",
+          "quantity"
+        ],
+        "additionalProperties": false
+      },
+      "ReturnLine": {
+        "type": "object",
+        "properties": {
+          "line_ref": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9._:-]+$"
+          },
+          "sku_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9._:-]+$"
+          },
+          "quantity": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 2147483647
+          },
+          "disposition": {
+            "type": "string",
+            "enum": [
+              "sellable",
+              "unavailable"
+            ]
+          }
+        },
+        "required": [
+          "line_ref",
+          "sku_id",
+          "quantity",
+          "disposition"
+        ],
+        "additionalProperties": false
+      },
+      "CapabilityState": {
+        "type": "string",
+        "enum": [
+          "not_supported",
+          "pending_approval",
+          "pending_verification",
+          "verified",
+          "temporarily_unavailable"
+        ]
+      },
+      "EffectiveLimits": {
+        "type": "object",
+        "properties": {
+          "reads_per_minute": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "reservation_operations_per_minute": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "event_submissions_per_minute": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "concurrent_writes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "max_lines": {
+            "type": "integer",
+            "const": 100
+          },
+          "max_request_bytes": {
+            "type": "integer",
+            "const": 131072
+          }
+        },
+        "required": [
+          "reads_per_minute",
+          "reservation_operations_per_minute",
+          "event_submissions_per_minute",
+          "concurrent_writes",
+          "max_lines",
+          "max_request_bytes"
+        ],
+        "additionalProperties": false
+      },
+      "Connection": {
+        "type": "object",
+        "properties": {
+          "instance_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9._:-]+$"
+          },
+          "connection_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9._:-]+$"
+          },
+          "environment": {
+            "type": "string",
+            "enum": [
+              "production",
+              "demo"
+            ]
+          },
+          "profile": {
+            "type": "string",
+            "enum": [
+              "reserve_api",
+              "platform_adapter",
+              "manual_quota"
+            ]
+          },
+          "lifecycle": {
+            "type": "string",
+            "enum": [
+              "draft",
+              "testing",
+              "active",
+              "draining",
+              "closed"
+            ]
+          },
+          "contract_version": {
+            "type": "string",
+            "const": "1.0.0-draft.2"
+          },
+          "scopes": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "connection:read",
+                "mapping:read",
+                "availability:read",
+                "availability:status",
+                "reservation:read",
+                "reservation:write",
+                "event:read",
+                "event:sale:write",
+                "event:cancel:write",
+                "event:dispatch:write",
+                "event:return:write"
+              ]
+            },
+            "uniqueItems": true
+          },
+          "capabilities": {
+            "type": "object",
+            "properties": {
+              "mapping_read": {
+                "$ref": "#/components/schemas/CapabilityState"
+              },
+              "availability_read": {
+                "$ref": "#/components/schemas/CapabilityState"
+              },
+              "reservation_write": {
+                "$ref": "#/components/schemas/CapabilityState"
+              },
+              "event_sale": {
+                "$ref": "#/components/schemas/CapabilityState"
+              },
+              "event_cancel": {
+                "$ref": "#/components/schemas/CapabilityState"
+              },
+              "event_dispatch": {
+                "$ref": "#/components/schemas/CapabilityState"
+              },
+              "event_return": {
+                "$ref": "#/components/schemas/CapabilityState"
+              },
+              "inventory_read": {
+                "$ref": "#/components/schemas/CapabilityState"
+              },
+              "inventory_write": {
+                "$ref": "#/components/schemas/CapabilityState"
+              },
+              "reconcile": {
+                "$ref": "#/components/schemas/CapabilityState"
+              }
+            },
+            "required": [
+              "mapping_read",
+              "availability_read",
+              "reservation_write",
+              "event_sale",
+              "event_cancel",
+              "event_dispatch",
+              "event_return",
+              "inventory_read",
+              "inventory_write",
+              "reconcile"
+            ],
+            "additionalProperties": false
+          },
+          "mapping_revision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "effective_limits": {
+            "$ref": "#/components/schemas/EffectiveLimits"
+          },
+          "tenant_ref": {
+            "$ref": "#/components/schemas/Reference"
+          },
+          "inventory_pool_id": {
+            "$ref": "#/components/schemas/Reference"
+          },
+          "location_id": {
+            "$ref": "#/components/schemas/Reference"
+          },
+          "catalog_instance_ref": {
+            "$ref": "#/components/schemas/Reference"
+          },
+          "stock_ledger_instance_ref": {
+            "$ref": "#/components/schemas/Reference"
+          },
+          "shared_stock_enabled": {
+            "type": "boolean",
+            "description": "Verified module authorization for shared sales in this pool; returned by the service, not caller selected."
+          }
+        },
+        "required": [
+          "instance_id",
+          "connection_id",
+          "environment",
+          "profile",
+          "lifecycle",
+          "contract_version",
+          "scopes",
+          "capabilities",
+          "mapping_revision",
+          "effective_limits",
+          "tenant_ref",
+          "inventory_pool_id",
+          "location_id",
+          "catalog_instance_ref",
+          "stock_ledger_instance_ref",
+          "shared_stock_enabled"
+        ],
+        "additionalProperties": false
+      },
+      "Mapping": {
+        "type": "object",
+        "properties": {
+          "mapping_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9._:-]+$"
+          },
+          "external_product_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9._:-]+$"
+          },
+          "external_variant_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9._:-]+$"
+          },
+          "external_seller_sku": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 128
+          },
+          "sku_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9._:-]+$"
+          },
+          "sku_code": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "mapping_version": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "mapping_id",
+          "external_product_id",
+          "external_variant_id",
+          "external_seller_sku",
+          "sku_id",
+          "sku_code",
+          "mapping_version"
+        ],
+        "additionalProperties": false
+      },
+      "MappingPage": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Mapping"
+            },
+            "minItems": 0,
+            "maxItems": 100
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 2048
+          },
+          "mapping_revision": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor",
+          "mapping_revision"
+        ],
+        "additionalProperties": false
+      },
+      "InStockItem": {
+        "type": "object",
+        "properties": {
+          "sku_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9._:-]+$"
+          },
+          "availability_state": {
+            "type": "string",
+            "const": "in_stock"
+          },
+          "available_quantity": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 2147483647
+          },
+          "stock_version": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "as_of": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "Z$"
+          }
+        },
+        "required": [
+          "sku_id",
+          "availability_state",
+          "available_quantity",
+          "stock_version",
+          "as_of"
+        ],
+        "additionalProperties": false
+      },
+      "OutOfStockItem": {
+        "type": "object",
+        "properties": {
+          "sku_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9._:-]+$"
+          },
+          "availability_state": {
+            "type": "string",
+            "const": "out_of_stock"
+          },
+          "available_quantity": {
+            "type": "integer",
+            "const": 0
+          },
+          "stock_version": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "as_of": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "Z$"
+          }
+        },
+        "required": [
+          "sku_id",
+          "availability_state",
+          "available_quantity",
+          "stock_version",
+          "as_of"
+        ],
+        "additionalProperties": false
+      },
+      "ReviewOrUnknownItem": {
+        "type": "object",
+        "properties": {
+          "sku_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9._:-]+$"
+          },
+          "availability_state": {
+            "type": "string",
+            "enum": [
+              "needs_review",
+              "unknown"
+            ]
+          },
+          "available_quantity": {
+            "type": "null"
+          },
+          "stock_version": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "as_of": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "Z$"
+          }
+        },
+        "required": [
+          "sku_id",
+          "availability_state",
+          "available_quantity",
+          "stock_version",
+          "as_of"
+        ],
+        "additionalProperties": false
+      },
+      "Availability": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/InStockItem"
+                },
+                {
+                  "$ref": "#/components/schemas/OutOfStockItem"
+                },
+                {
+                  "$ref": "#/components/schemas/ReviewOrUnknownItem"
+                }
+              ]
+            },
+            "minItems": 1,
+            "maxItems": 100
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "additionalProperties": false
+      },
+      "AvailabilityStatusItem": {
+        "type": "object",
+        "properties": {
+          "sku_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9._:-]+$"
+          },
+          "availability_state": {
+            "type": "string",
+            "enum": [
+              "in_stock",
+              "out_of_stock",
+              "needs_review",
+              "unknown"
+            ]
+          },
+          "as_of": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "Z$"
+          }
+        },
+        "required": [
+          "sku_id",
+          "availability_state",
+          "as_of"
+        ],
+        "additionalProperties": false
+      },
+      "AvailabilityStatus": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AvailabilityStatusItem"
+            },
+            "minItems": 1,
+            "maxItems": 100
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "additionalProperties": false
+      },
+      "CreateReservation": {
+        "type": "object",
+        "properties": {
+          "order_ref": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9._:-]+$"
+          },
+          "lines": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OrderLine"
+            },
+            "minItems": 1,
+            "maxItems": 100
+          }
+        },
+        "required": [
+          "order_ref",
+          "lines"
+        ],
+        "additionalProperties": false
+      },
+      "Reservation": {
+        "type": "object",
+        "properties": {
+          "reservation_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9._:-]+$"
+          },
+          "order_ref": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9._:-]+$"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "active",
+              "committed",
+              "released",
+              "expired"
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "Z$"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "Z$"
+          },
+          "lines": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OrderLine"
+            },
+            "minItems": 1,
+            "maxItems": 100
+          }
+        },
+        "required": [
+          "reservation_id",
+          "order_ref",
+          "state",
+          "created_at",
+          "expires_at",
+          "lines"
+        ],
+        "additionalProperties": false
+      },
+      "ReleaseReservation": {
+        "type": "object",
+        "properties": {
+          "reason": {
+            "type": "string",
+            "enum": [
+              "payment_failed",
+              "customer_cancelled",
+              "replaced_checkout",
+              "admin_verified"
+            ]
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "additionalProperties": false
+      },
+      "EventReceipt": {
+        "type": "object",
+        "properties": {
+          "event_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9._:-]+$"
+          },
+          "event_ref": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9._:-]+$"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "received",
+              "needs_review"
+            ]
+          }
+        },
+        "required": [
+          "event_id",
+          "event_ref",
+          "state"
+        ],
+        "additionalProperties": false
+      },
+      "EventResult": {
+        "type": "object",
+        "properties": {
+          "event_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9._:-]+$"
+          },
+          "event_ref": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9._:-]+$"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "received",
+              "processed",
+              "needs_review",
+              "failed"
+            ]
+          },
+          "received_at": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "Z$"
+          },
+          "processed_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "pattern": "Z$"
+          },
+          "effects_applied": {
+            "type": "boolean"
+          },
+          "reason_code": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 64,
+            "pattern": "^[A-Z_]+$"
+          },
+          "reconciliation_ref": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9._:-]+$"
+          }
+        },
+        "required": [
+          "event_id",
+          "event_ref",
+          "state",
+          "received_at",
+          "processed_at",
+          "effects_applied",
+          "reason_code",
+          "reconciliation_ref"
+        ],
+        "additionalProperties": false,
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "state": {
+                  "const": "processed"
+                }
+              },
+              "required": [
+                "state"
+              ]
+            },
+            "then": {
+              "properties": {
+                "effects_applied": {
+                  "const": true
+                },
+                "processed_at": {
+                  "type": "string",
+                  "format": "date-time",
+                  "pattern": "Z$"
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "state": {
+                  "enum": [
+                    "received",
+                    "failed"
+                  ]
+                }
+              },
+              "required": [
+                "state"
+              ]
+            },
+            "then": {
+              "properties": {
+                "effects_applied": {
+                  "const": false
+                }
+              }
+            }
+          }
+        ]
+      },
+      "ErrorLine": {
+        "type": "object",
+        "properties": {
+          "line_ref": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9._:-]+$"
+          },
+          "sku_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9._:-]+$"
+          }
+        },
+        "required": [
+          "line_ref",
+          "sku_id"
+        ],
+        "additionalProperties": false
+      },
+      "ErrorDetails": {
+        "type": "object",
+        "properties": {
+          "lines": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ErrorLine"
+            },
+            "minItems": 0,
+            "maxItems": 100
+          },
+          "field": {
+            "type": "string",
+            "maxLength": 128
+          },
+          "retry_after_seconds": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "operation_ref": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9._:-]+$"
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "Error": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "INVALID_REQUEST",
+                  "UNAUTHORIZED",
+                  "FORBIDDEN",
+                  "SKU_NOT_FOUND",
+                  "RESERVATION_NOT_FOUND",
+                  "EVENT_NOT_FOUND",
+                  "INSUFFICIENT_STOCK",
+                  "SKU_REVIEW_REQUIRED",
+                  "MAPPING_REVIEW_REQUIRED",
+                  "CONNECTION_DRAINING",
+                  "CONNECTION_CLOSED",
+                  "CONNECTION_NOT_ACTIVE",
+                  "CAPABILITY_NOT_AVAILABLE",
+                  "STATE_CONFLICT",
+                  "RESERVATION_EXPIRED",
+                  "ORDER_REFERENCE_CONFLICT",
+                  "IDEMPOTENCY_CONFLICT",
+                  "REQUEST_IN_PROGRESS",
+                  "RATE_LIMITED",
+                  "REQUEST_TOO_LARGE",
+                  "INTERNAL_ERROR",
+                  "SERVICE_UNAVAILABLE",
+                  "MAPPING_REVISION_CHANGED",
+                  "MODULE_NOT_ENABLED"
+                ]
+              },
+              "message": {
+                "type": "string",
+                "maxLength": 512
+              },
+              "retryable": {
+                "type": "boolean"
+              },
+              "details": {
+                "$ref": "#/components/schemas/ErrorDetails"
+              }
+            },
+            "required": [
+              "code",
+              "message",
+              "retryable",
+              "details"
+            ],
+            "additionalProperties": false
+          },
+          "request_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9._:-]+$"
+          }
+        },
+        "required": [
+          "error",
+          "request_id"
+        ],
+        "additionalProperties": false
+      },
+      "SaleConfirmed": {
+        "type": "object",
+        "properties": {
+          "event_ref": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9._:-]+$"
+          },
+          "order_ref": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9._:-]+$"
+          },
+          "action": {
+            "type": "string",
+            "const": "sale_confirmed"
+          },
+          "occurred_at": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "Z$"
+          },
+          "lines": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OrderLine"
+            },
+            "minItems": 1,
+            "maxItems": 100
+          },
+          "reservation_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9._:-]+$"
+          }
+        },
+        "required": [
+          "event_ref",
+          "order_ref",
+          "action",
+          "occurred_at",
+          "lines"
+        ],
+        "additionalProperties": false
+      },
+      "SaleCancelled": {
+        "type": "object",
+        "properties": {
+          "event_ref": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9._:-]+$"
+          },
+          "order_ref": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9._:-]+$"
+          },
+          "action": {
+            "type": "string",
+            "const": "sale_cancelled"
+          },
+          "occurred_at": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "Z$"
+          },
+          "lines": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OrderLine"
+            },
+            "minItems": 1,
+            "maxItems": 100
+          }
+        },
+        "required": [
+          "event_ref",
+          "order_ref",
+          "action",
+          "occurred_at",
+          "lines"
+        ],
+        "additionalProperties": false
+      },
+      "Dispatched": {
+        "type": "object",
+        "properties": {
+          "event_ref": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9._:-]+$"
+          },
+          "order_ref": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9._:-]+$"
+          },
+          "action": {
+            "type": "string",
+            "const": "dispatched"
+          },
+          "occurred_at": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "Z$"
+          },
+          "lines": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OrderLine"
+            },
+            "minItems": 1,
+            "maxItems": 100
+          }
+        },
+        "required": [
+          "event_ref",
+          "order_ref",
+          "action",
+          "occurred_at",
+          "lines"
+        ],
+        "additionalProperties": false
+      },
+      "ReturnReceived": {
+        "type": "object",
+        "properties": {
+          "event_ref": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9._:-]+$"
+          },
+          "order_ref": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9._:-]+$"
+          },
+          "action": {
+            "type": "string",
+            "const": "return_received"
+          },
+          "occurred_at": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "Z$"
+          },
+          "lines": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReturnLine"
+            },
+            "minItems": 1,
+            "maxItems": 100
+          }
+        },
+        "required": [
+          "event_ref",
+          "order_ref",
+          "action",
+          "occurred_at",
+          "lines"
+        ],
+        "additionalProperties": false
+      },
+      "InventoryEvent": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/SaleConfirmed"
+          },
+          {
+            "$ref": "#/components/schemas/SaleCancelled"
+          },
+          {
+            "$ref": "#/components/schemas/Dispatched"
+          },
+          {
+            "$ref": "#/components/schemas/ReturnReceived"
+          }
+        ],
+        "discriminator": {
+          "propertyName": "action",
+          "mapping": {
+            "sale_confirmed": "#/components/schemas/SaleConfirmed",
+            "sale_cancelled": "#/components/schemas/SaleCancelled",
+            "dispatched": "#/components/schemas/Dispatched",
+            "return_received": "#/components/schemas/ReturnReceived"
+          }
+        }
+      },
+      "ConnectionResponse": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/Connection"
+          },
+          "request_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9._:-]+$"
+          }
+        },
+        "required": [
+          "data",
+          "request_id"
+        ],
+        "additionalProperties": false
+      },
+      "MappingPageResponse": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/MappingPage"
+          },
+          "request_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9._:-]+$"
+          }
+        },
+        "required": [
+          "data",
+          "request_id"
+        ],
+        "additionalProperties": false
+      },
+      "AvailabilityResponse": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/Availability"
+          },
+          "request_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9._:-]+$"
+          }
+        },
+        "required": [
+          "data",
+          "request_id"
+        ],
+        "additionalProperties": false
+      },
+      "AvailabilityStatusResponse": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/AvailabilityStatus"
+          },
+          "request_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9._:-]+$"
+          }
+        },
+        "required": [
+          "data",
+          "request_id"
+        ],
+        "additionalProperties": false
+      },
+      "ReservationResponse": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/Reservation"
+          },
+          "request_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9._:-]+$"
+          }
+        },
+        "required": [
+          "data",
+          "request_id"
+        ],
+        "additionalProperties": false
+      },
+      "EventReceiptResponse": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/EventReceipt"
+          },
+          "request_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9._:-]+$"
+          }
+        },
+        "required": [
+          "data",
+          "request_id"
+        ],
+        "additionalProperties": false
+      },
+      "EventResultResponse": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/EventResult"
+          },
+          "request_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9._:-]+$"
+          }
+        },
+        "required": [
+          "data",
+          "request_id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "examples": {
+      "Mappings": {
+        "value": {
+          "data": {
+            "items": [
+              {
+                "mapping_id": "mapping-001",
+                "external_product_id": "product-001",
+                "external_variant_id": "variant-001",
+                "external_seller_sku": "SELLER-BLACK",
+                "sku_id": "sku-001",
+                "sku_code": "ACV-EARPHONE-BLK",
+                "mapping_version": 1
+              }
+            ],
+            "next_cursor": null,
+            "mapping_revision": 1
+          },
+          "request_id": "setup-002"
+        }
+      },
+      "CreateReservation": {
+        "value": {
+          "order_ref": "web-order-001",
+          "lines": [
+            {
+              "line_ref": "line-001",
+              "sku_id": "sku-001",
+              "quantity": 1
+            }
+          ]
+        }
+      },
+      "SaleConfirmed": {
+        "value": {
+          "event_ref": "sale-web-order-001-v1",
+          "order_ref": "web-order-001",
+          "action": "sale_confirmed",
+          "occurred_at": "2026-10-07T03:05:00Z",
+          "reservation_id": "res-001",
+          "lines": [
+            {
+              "line_ref": "line-001",
+              "sku_id": "sku-001",
+              "quantity": 1
+            }
+          ]
+        }
+      },
+      "Connection": {
+        "value": {
+          "data": {
+            "instance_id": "demo-instance-001",
+            "connection_id": "demo-web-001",
+            "environment": "demo",
+            "profile": "reserve_api",
+            "lifecycle": "active",
+            "contract_version": "1.0.0-draft.2",
+            "scopes": [
+              "connection:read",
+              "mapping:read",
+              "availability:read",
+              "reservation:read",
+              "reservation:write",
+              "event:read",
+              "event:sale:write"
+            ],
+            "capabilities": {
+              "mapping_read": "verified",
+              "availability_read": "verified",
+              "reservation_write": "verified",
+              "event_sale": "verified",
+              "event_cancel": "not_supported",
+              "event_dispatch": "not_supported",
+              "event_return": "not_supported",
+              "inventory_read": "not_supported",
+              "inventory_write": "not_supported",
+              "reconcile": "not_supported"
+            },
+            "mapping_revision": 1,
+            "effective_limits": {
+              "reads_per_minute": 120,
+              "reservation_operations_per_minute": 30,
+              "event_submissions_per_minute": 120,
+              "concurrent_writes": 5,
+              "max_lines": 100,
+              "max_request_bytes": 131072
+            },
+            "tenant_ref": "demo-tenant-001",
+            "inventory_pool_id": "demo-pool-001",
+            "location_id": "demo-location-001",
+            "catalog_instance_ref": "demo-catalog-001",
+            "stock_ledger_instance_ref": "demo-ledger-001",
+            "shared_stock_enabled": true
+          },
+          "request_id": "setup-001"
+        }
+      }
+    }
+  },
+  "x-quantity-authority": "Shared stock ledger Core; Inventory wraps atomic commands and does not own another quantity ledger.",
+  "x-trusted-context": [
+    "tenant_ref",
+    "connection_id",
+    "inventory_pool_id",
+    "location_id",
+    "catalog_instance_ref",
+    "stock_ledger_instance_ref"
+  ]
+}

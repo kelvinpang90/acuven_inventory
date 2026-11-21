@@ -1,0 +1,14 @@
+{
+  "event_ref": "sale-web-order-001-v1",
+  "order_ref": "web-order-001",
+  "action": "sale_confirmed",
+  "occurred_at": "2026-10-07T03:05:00Z",
+  "reservation_id": "res-001",
+  "lines": [
+    {
+      "line_ref": "line-001",
+      "sku_id": "sku-001",
+      "quantity": 1
+    }
+  ]
+}

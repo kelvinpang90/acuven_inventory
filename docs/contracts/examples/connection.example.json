@@ -1,0 +1,47 @@
+{
+  "data": {
+    "instance_id": "demo-instance-001",
+    "connection_id": "demo-web-001",
+    "environment": "demo",
+    "profile": "reserve_api",
+    "lifecycle": "active",
+    "contract_version": "1.0.0-draft.2",
+    "scopes": [
+      "connection:read",
+      "mapping:read",
+      "availability:read",
+      "reservation:read",
+      "reservation:write",
+      "event:read",
+      "event:sale:write"
+    ],
+    "capabilities": {
+      "mapping_read": "verified",
+      "availability_read": "verified",
+      "reservation_write": "verified",
+      "event_sale": "verified",
+      "event_cancel": "not_supported",
+      "event_dispatch": "not_supported",
+      "event_return": "not_supported",
+      "inventory_read": "not_supported",
+      "inventory_write": "not_supported",
+      "reconcile": "not_supported"
+    },
+    "mapping_revision": 1,
+    "effective_limits": {
+      "reads_per_minute": 120,
+      "reservation_operations_per_minute": 30,
+      "event_submissions_per_minute": 120,
+      "concurrent_writes": 5,
+      "max_lines": 100,
+      "max_request_bytes": 131072
+    },
+    "tenant_ref": "demo-tenant-001",
+    "inventory_pool_id": "demo-pool-001",
+    "location_id": "demo-location-001",
+    "catalog_instance_ref": "demo-catalog-001",
+    "stock_ledger_instance_ref": "demo-ledger-001",
+    "shared_stock_enabled": true
+  },
+  "request_id": "setup-001"
+}

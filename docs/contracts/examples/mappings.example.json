@@ -1,0 +1,18 @@
+{
+  "data": {
+    "items": [
+      {
+        "mapping_id": "mapping-001",
+        "external_product_id": "product-001",
+        "external_variant_id": "variant-001",
+        "external_seller_sku": "SELLER-BLACK",
+        "sku_id": "sku-001",
+        "sku_code": "ACV-EARPHONE-BLK",
+        "mapping_version": 1
+      }
+    ],
+    "next_cursor": null,
+    "mapping_revision": 1
+  },
+  "request_id": "setup-002"
+}
