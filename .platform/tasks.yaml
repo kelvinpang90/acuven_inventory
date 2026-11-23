@@ -203,7 +203,7 @@ tasks:
     depends_on:
       - INVENTORY-TASK-001
     acceptance_criteria:
-      - 三张表的列、类型、可空、默认值（模型与迁移两处）、唯一约束、检查约束与索引逐项符合 Core 客户端设计补充第 2 节，约束与索引名与设计一致；三张表的排序规则是 utf8mb4_bin；JSON 列的空值存 SQL NULL；时间列是不带时区的 UTC
+      - 三张表的列、类型、可空、默认值（模型与迁移两处）、唯一约束、检查约束与索引逐项符合 Core 客户端设计补充第 2 节，约束与索引名与设计一致；三张表的排序规则是 utf8mb4_0900_bin；JSON 列的空值存 SQL NULL；时间列是不带时区的 UTC
       - 模型在 app/models/core_outbox.py 与 app/models/scheduled_job.py，app/models/__init__.py 导出 CoreOutboxCommand、CoreOutboxOrderingLock、ScheduledJob
       - 迁移 alembic/versions/20261123_0002_core_outbox_and_jobs.py 的 revision 为 0002、down_revision 为 0001；upgrade 建三张表并写出全部约束、索引名与排序规则，downgrade 删三张表；CI 的 integration 检查里迁移往返与 alembic check 通过
       - 集成测试 tests/integration/test_core_outbox_models.py 用 alembic 的 upgrade 按迁移建表，逐条验证设计第 2 节的例子 D1 至 D6，结束时 downgrade 到 base；没有测试库时跳过；测试由 PR 的必需 CI 检查 integration 执行并通过
