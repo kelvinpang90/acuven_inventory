@@ -1,6 +1,6 @@
 # Acuven Inventory 最小 V1 设计：只接自营 Shopee 与 TikTok Shop
 
-> 版本：0.2 · 日期：2026-11-21 · 状态：**Kelvin 2026-11-21 批准全文**，包括第 14 节与现有文档的全部出入；第 16 节的待定项同日按建议定，只有 V-10 仍待定。
+> 版本：0.3 · 日期：2026-11-21 · 状态：**Kelvin 2026-11-21 批准全文**（0.2），0.3 的改动（第 3.3、5.1 节的晚到确认情形，见第 18 节）同日批准。批准的内容，包括第 14 节与现有文档的全部出入；第 16 节的待定项同日按建议定，只有 V-10 仍待定。
 > 批准的是设计，不是实施授权：代码任务仍按模板流程，在建好的仓库里逐个登记、过设计预审。
 > 按模板规则，设计有改动时，改动部分的批准作废、须重新批准。第 14 节列到的现有文档（REQUIREMENTS、STOCK_RULES、DEVELOPMENT 等）正文没有改；V1 范围内与它们冲突的地方，以本文为准。
 > 起因：Kelvin 2026-11-21 定的当前优先——尽快接通自营 Shopee 与 TikTok Shop 的库存管理（`acuven_hub/DECISIONS.md` I-08）；
@@ -130,7 +130,7 @@ Core 引用限 1–128 个 `[A-Za-z0-9._:-]` 字符，不得含个人资料，�
 | 期初、池切 live | `POST /v1/stock-imports`、`…/confirm`，`POST /v1/pools/{id}/go-live` | `stock_admin` |
 | 收货、不可售与报损、盘点、更正 | `POST /v1/receipts`、`/v1/unavailable-adjustments`、`/v1/counts…`、`/v1/corrections` | `stock_admin` |
 | 可售量、余额、流水 | `GET /v1/availability`、`/v1/balances`、`/v1/ledger` | 不要求 |
-| 平台订单 | `POST /v1/reservations`、`/v1/orders/{ref}/sale-commits`、`/dispatches`、`/refund-restocks`、`/return-receipts` | 不要求 |
+| 平台订单 | `POST /v1/reservations`、`/v1/orders/{ref}/sale-commits`、`/dispatches`、`/refund-restocks`、`/return-receipts`、`/late-payment-review/close`（只用于下面说的晚到确认情形） | 不要求 |
 | 对账 | `GET /v1/reconciliation/orders`、`GET /v1/orders/{ref}/stock`、`GET /v1/reservations?order_ref=` | 不要求 |
 | 自查 | `GET /v1/ops/invariants` | 运维凭据 |
 
@@ -139,7 +139,8 @@ Core 引用限 1–128 个 `[A-Za-z0-9._:-]` 字符，不得含个人资料，�
   - 运维凭据：只带 `ops.read`、不绑入口（§10 第 4 条）。
 
   两个都只放在 Inventory 服务端的密钥文件里。
-- V1 不用预留释放（`…/release`）、晚到支付待审结案和 SKU 合并：确认销售紧跟在预留之后，超卖单不进 Core 的待审（第 5 节）。
+- V1 不用预留释放（`…/release`）与 SKU 合并：确认销售紧跟在预留之后；平台超卖的单不进 Core 的待审（第 5 节）。
+- **晚到确认的情形**（0.3，Core 契约 0.19 §5.5）：Core 停机超过预留有效期时，发件箱补交的确认销售会撞上已到期的预留，Core 照晚到确认处理：有货直接确认；没货把这单转入 `late_payment_review`，不扣数。这时 Inventory 把它当待处理、件数留在 pending；补货后用新幂等键、同一 `payment_ref` 重试确认，或平台取消后调用 `late-payment-review/close` 结案。
 
 ### 3.4 平台订单行到 Core 订单行
 
@@ -223,7 +224,7 @@ Core 的确认销售，在平台上对应“平台把订单交给卖家履约”
 | ↳ ① 被拒：`INSUFFICIENT_STOCK`（平台超卖） | 订单进待处理，件数留在 pending，F 变小或变负；发严重告警 | **不再调 Core**。§5.5 规定缺货这类业务拒绝不能当故障放行，所以不走 `reservation_id` 为 `null` 的故障补交 |
 | ↳ ① 被拒：`SKU_INACTIVE`、`SKU_SELLING_PAUSED`、`SKU_NOT_FOUND`、`SKU_MERGED`、`POOL_NOT_LIVE` | 同上，进待处理并告警，写明原因 | 不再调 Core |
 | 待处理单的处理：补货或解除停用后 | 管理员按“重试”，新幂等键、同一 `order_ref` 重新预留（§5.6：被拒不占用 `order_ref`），再确认销售 | ① ② |
-| 待处理单的处理：平台取消 | `pending −q`，Q 不加 | — |
+| 待处理单的处理：平台取消 | `pending −q`，Q 不加 | 一般不调 Core；如果这单在 Core 处于 `late_payment_review`（3.3 的晚到确认情形），调 `late-payment-review/close` |
 | 付款前取消 | 按 4.2 | — |
 | 已确认、未交运的件被取消 | 按平台行拆到 Core 行；Core 成功后按 4.2 加 Q | `refund-restocks` |
 | 交运（部分或全部） | 按平台行拆到 Core 行。平台的“已发货”是否等于实物已交给承运商，待核实（V-08）；§5.8 要求实物交运时才报 | `dispatches` |
@@ -497,3 +498,4 @@ flowchart LR
   11. 新增 V-12（Inventory 担任唯一销售入口、修订 Core 契约），并把未核实的平台行为并入 V-08。
   12. 第 14 节补列五处出入：配额校验的位置、`pending`、人工登记的更正、Redis 与 Celery、准入路线的原文出处。
 - **0.2 批准**（2026-11-21）：Kelvin 按建议定了第 16 节的待定项（V-10 除外），随后批准全文。
+- **0.3**（2026-11-21，Kelvin 同日批准）：跟 Core 契约 0.19 的独立审查对齐。Core 停机超过预留有效期时，补交会走晚到确认，没货的单会进 Core 的待审；3.3 节原写“V1 不用晚到支付待审结案”不成立，改为写明这一情形与处理，5.1 节待处理单被平台取消的一行同步。其余不变。
