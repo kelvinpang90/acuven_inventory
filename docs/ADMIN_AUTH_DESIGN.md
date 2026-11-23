@@ -84,7 +84,7 @@
 
 ### 4.1 用户名与密码
 
-- **用户名**：合法用户名是 `^[a-z0-9][a-z0-9._-]{2,31}$`（3–32 个 ASCII 字符，小写字母、数字、`.`、`_`、`-`，首字符是字母或数字）。
+- **用户名**：合法用户名是**整串匹配**（`re.fullmatch`，不用 `re.match`，否则结尾的换行也能通过）`[a-z0-9][a-z0-9._-]{2,31}` 的串（3–32 个 ASCII 字符，小写字母、数字、`.`、`_`、`-`，首字符是字母或数字）。
   命令行输入与登录时提交的用户名都先用 Python 的 `str.lower()` 转小写，得到「规范用户名」。建号时规范用户名不合法即拒绝。
   **登录时规范用户名不合法就不查库**，直接按「用户名不存在」处理（4.3 第 2 步）。这样查库用的永远是纯 ASCII 小写串，MySQL 默认排序规则的大小写与重音不敏感（例如 `kélvin` 会匹配到 `kelvin`）用不上；
   能匹配到同一账号的输入，规范用户名必然相同，`throttle_key`（4.2）也就相同，换写法拿不到新的尝试次数。
@@ -142,13 +142,13 @@
 - **令牌**：`secrets.token_urlsafe(32)`；库里只存它的 SHA-256 十六进制（`token_hash`）；原文只在登录成功时返回一次。
 - **有效期**：自登录起 **12 小时**绝对到期，使用中不延长。
 - **解析**：`resolve_session(db, *, token, now) -> ActiveSession | None`。按 `token_hash` 找会话；`revoked_at` 为空、`expires_at > 现在`、账号 `disabled_at` 为空，三条都成立才返回
-  `ActiveSession(session_id, account_id, username, expires_at)`（不可变数据类），否则返回 `None`。`token` 为空串或不是字符串时直接返回 `None`。只读，不提交。
+  `ActiveSession(session_id, account_id, username, expires_at)`（不可变数据类），否则返回 `None`。`token` 不是字符串、为空串或无法按 UTF-8 编码时直接返回 `None`，不抛异常。只读，不提交。
 - **撤销**：`revoke_session(db, *, session_id, now) -> None`，把该会话的 `revoked_at` 设为现在并提交；已撤销的再撤销不改原值；没有这个 `session_id` 时什么都不做、不报错。重设密码、停用账号时撤销该账号**全部**未撤销的会话（与改账号在同一事务）。
 - **并发**：登录（4.3）与重设密码、停用、启用（4.5）都先对账号行 `SELECT … FOR UPDATE`，在同一事务里改完才提交，所以对同一账号是串行的：
   停用先提交时，排在后面的登录看到 `disabled_at` 已设，写 `disabled`；登录先提交时，它建的会话已在库里，随后的停用把它一起撤销。重设密码同理（后到的登录用新哈希校验）。
   不会出现「撤销全部会话之后又冒出一条有效会话」。
 - **CSRF 令牌**：`csrf_token_for(token) -> str`，`HMAC-SHA256(key=会话令牌原文的 UTF-8 字节, msg=b"inventory-admin-csrf")` 的十六进制，**不入库**，随时可由 cookie 里的会话令牌重算；
-  `csrf_token_matches(token, presented) -> bool` 用 `hmac.compare_digest` 比较，`presented` 为空或不是字符串时为 `False`。浏览器脚本读不到 HttpOnly 的会话 cookie，只能从接口响应拿到 CSRF 令牌。
+  `csrf_token_matches(token, presented) -> bool` 用 `hmac.compare_digest` 比较，`presented` 不是字符串、为空或含非 ASCII 字符时为 `False`（`compare_digest` 对含非 ASCII 的 `str` 会抛 `TypeError`，所以先判断，再比较两者的 ASCII 字节）。浏览器脚本读不到 HttpOnly 的会话 cookie，只能从接口响应拿到 CSRF 令牌。
 - 以上函数与 `authenticate` 都在 `app/services/admin_auth.py`，接口层（第 5 节）只调用它们，不另写查询。
 
 | 编号 | 操作前 | 操作 | 结果 |
@@ -181,7 +181,7 @@
 - 密码只经交互输入，不接受命令行参数或环境变量。
 - **退出码**：0 成功（含上面两种「已是……状态」）；1 业务错误或取消——用户名不合法、已存在（含并发建号撞上唯一约束的 `IntegrityError`）、不存在、密码不合规、两次不一致、输入密码时遇到 EOF 或 Ctrl+C（输出「已取消」，什么都不写）；
   2 运行环境错误——没设 `INVENTORY_DATABASE_URL`、连不上数据库、表不存在或其他 `SQLAlchemyError`（输出「数据库错误」加异常类名，不输出连接串）。参数不对由 `argparse` 处理（它自己的退出码 2）。
-- 消息写到标准错误，成功结果写到标准输出；输出只有用户名与结果，不打印密码或哈希。
+- 成功结果（含「已是停用状态」「已是启用状态」）写到标准输出，错误与「已取消」写到标准错误；输出只有用户名与结果，不打印密码或哈希。
 
 ## 5. 接口（INVENTORY-TASK-003）
 
@@ -198,6 +198,7 @@
   不是 JSON 对象、缺 `username` 或 `password`、不是字符串、长度不在上表范围内，一律 422 `{"detail": "invalid_request"}`，不回显任何提交内容。多出来的字段忽略。
 - 三个接口的**所有**响应（含 401、403、422、429、503）都带 `Cache-Control: no-store`。
 - 未配置数据库（`database_url` 为空）时三个接口都回答 503 `{"detail": "database_not_configured"}`；处理中数据库出错（`SQLAlchemyError`）时回答 503 `{"detail": "database_unreachable"}`，与 `/readyz` 的两个原因一致，响应不含异常内容。
+- 判定顺序：先看数据库是否已配置（未配置即 503，不看请求体与 cookie），再校验请求体（POST）或 cookie（GET、DELETE），最后才查库。
 - 每个请求用一个 SQLAlchemy `Session`（由 `create_app` 里已有的 engine 建 `sessionmaker`），请求结束关闭。
 - 已登录时再登录：照常建新会话，旧会话不动（到期或退出时失效）。
 
@@ -256,4 +257,4 @@ TLS 在边缘反向代理终止，浏览器看到的是 HTTPS，所以 `Secure` 
 ## 8. 修订记录
 
 - **0.1**（2026-11-23）：草案。同日按三个任务的设计预审补齐：时间截断到整秒；登录时规范用户名不合法即不查库（避开 MySQL 排序规则的大小写与重音不敏感）；
-  密码的编码与 scrypt 的 `maxmem`；账号命令的退出码与先校验后提示；服务函数的签名与返回值（含账号变更的服务函数）；登录与账号变更对账号行加锁，避免撤销全部会话后又冒出新会话；登录请求体不回显提交值的 422；数据库出错时的 503；来源头的部署前提与残余风险；`now` 不得带时区、失败计数的窗口上界、账号变更先规范化用户名。
+  密码的编码与 scrypt 的 `maxmem`；账号命令的退出码与先校验后提示；服务函数的签名与返回值（含账号变更的服务函数）；登录与账号变更对账号行加锁，避免撤销全部会话后又冒出新会话；登录请求体不回显提交值的 422；数据库出错时的 503；来源头的部署前提与残余风险；`now` 不得带时区、失败计数的窗口上界、账号变更先规范化用户名。最终一轮预审后再定死四处细节（不改规则）：用户名整串匹配、CSRF 与会话令牌的非 ASCII 输入、「已是……状态」写到标准输出、503 未配置先于请求体与 cookie 判定。
