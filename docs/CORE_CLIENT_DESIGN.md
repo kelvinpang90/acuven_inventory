@@ -112,22 +112,27 @@
 `app/core_client/http.py`，只用标准库（`urllib.request`、`json`），**不加依赖**：
 
 ```
-send(settings, *, method, path, body=None, idempotency_key=None, actor=None, credential="business", request_id=None, transport=None) -> CoreResponse
+send(settings, *, method, path, body=None, idempotency_key=None, actor=None, credential="business", request_id=None, transport=None, timeout=DEFAULT_TIMEOUT_SECONDS) -> CoreResponse
+encode_body(body) -> bytes
+check_configured(settings, credential="business") -> bool
 ```
 
 - `credential` 是 `"business"` 或 `"ops"`，决定读哪个令牌文件；`transport` 是可替换的发送函数（测试注入假的，生产用 urllib），签名 `(method, url, headers, body_bytes, timeout) -> (status, headers, body_bytes)`，网络错误、超时以异常抛出。
 - 请求头：
   - `Authorization: Bearer <令牌>`；
-  - `Content-Type: application/json`（有请求体时）；请求体按 `json.dumps(body, ensure_ascii=False, separators=(",", ":"))` 编码为 UTF-8；
+  - `Content-Type: application/json`（有请求体时）；请求体用 `encode_body` 编码：`json.dumps(body, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode("utf-8")`。`allow_nan=False` 让 `NaN`、`Infinity` 在编码时就报 `ValueError`（Core 拒绝它们，§7.1；MySQL 的 JSON 列也存不下）；不能编码的对象同样报 `ValueError`（把 `TypeError` 转成 `ValueError`）。
   - `Idempotency-Key`：写请求（POST、PATCH）必带，格式 1–128 个 0x21–0x7E 字符；
   - `X-Request-ID`：调用方给的，不给就生成 `inv_` 加 26 个字符的随机串（`[A-Za-z0-9]`）；格式 1–128 个 `[A-Za-z0-9._:-]`；
   - `X-Actor-Ref`、`X-Actor-Role`：`actor` 为 `Actor(ref, role)` 时两个都带，`role` 只能是 `stock_operator`、`stock_admin`、`catalog_admin`（§10 第 3 条），否则 `ValueError`；`actor` 为空时都不带；
   - `User-Agent: acuven-inventory/<settings.git_sha>`（§8.4 要求带名字与版本）。
-- 超时：一个值 15 秒，传给 `urllib.request.urlopen` 的 `timeout`（标准库里它同时管连接与每次读，不分开设）；transport 的 `timeout` 参数就是这个数。不自动跟随重定向（3xx 归 `caller_error`，见下表）。
+- 超时：一个值，模块常量 `DEFAULT_TIMEOUT_SECONDS = 15`，`send` 的 `timeout` 参数可以覆盖（测试用小值）；它原样传给 transport，再传给标准库的 `open(…, timeout=…)`（标准库里它同时管连接与每次读，不分开设）。
+- 生产 transport 用 `urllib.request.build_opener(urllib.request.ProxyHandler({}), <不跟随重定向的处理器>)` 建一次 opener：`ProxyHandler({})` **不用**环境变量里的 `HTTP_PROXY` 等代理（Core 只在内部网络，走代理只会泄露令牌给代理）；不跟随重定向的处理器是 `HTTPRedirectHandler` 的子类，`redirect_request` 返回 `None`，这样 3xx 以 `HTTPError` 返回、按普通响应分类（3xx 归 `caller_error`，见下表）。
+- transport 的头：请求头传 `dict[str, str]`；响应头返回 `dict[str, str]`，键一律转成小写（`send` 按小写查找，所以查找不分大小写）。`Idempotency-Replayed` 的值去掉首尾空白后、不分大小写等于 `true` 才算重放。
 - 生产用的 transport 把 `urllib.error.HTTPError` 当作**正常响应**返回（取它的状态码、头与正文），只有拿不到 HTTP 响应时才抛异常。
-- `send` 把这些异常归为 `unknown`：`urllib.error.URLError`、`TimeoutError`（含 `socket.timeout`）、`ConnectionError`、`ssl.SSLError`、`http.client.HTTPException` 及其他 `OSError`。别的异常（编程错误）原样抛出。
-- 发出前的校验（不合格报 `ValueError`，是调用方 bug）：`method` 只能是 `GET`、`POST`、`PATCH`；`GET` 不能带幂等键或请求体，`POST`、`PATCH` 必须带幂等键；`path` 以 `/v1/` 开头；`X-Actor-Ref` 1–128 个 `[A-Za-z0-9._:-]` 字符。
-- 判定顺序：先做上一条的校验（不合格就 `ValueError`，不管配没配置），再看配置（未配置就 `not_configured`），最后才发出。
+- `send` 把这些异常归为 `unknown`：`urllib.error.URLError`、`TimeoutError`（含 `socket.timeout`）、`ConnectionError`、`http.client.HTTPException` 及其他 `OSError`（`ssl.SSLError` 是 `OSError` 的子类，已包含；**不要 `import ssl`**——Worker 沙箱关闭 Win32k 时 `_ssl` 加载失败，单元测试要能在沙箱里跑）。别的异常（编程错误）原样抛出。
+- 发出前的校验（不合格报 `ValueError`，是调用方 bug）：`credential` 只能是 `business` 或 `ops`；`method` 只能是 `GET`、`POST`、`PATCH`；`GET` 不能带幂等键或请求体，`POST`、`PATCH` 必须带幂等键；`path` 以 `/v1/` 开头；`X-Actor-Ref` 1–128 个 `[A-Za-z0-9._:-]` 字符。
+- 判定顺序：先做上一条的校验与请求体编码（不合格就 `ValueError`，不管配没配置），再看配置（未配置就 `not_configured`），最后才发出。
+- `check_configured(settings, credential)`：只做「配置是否可用」的判定（`core_base_url` 合格、对应令牌文件读得到且内容合格），不发请求、不抛异常；`send` 与发件箱（4.3 第 1 步）都用它，不各写一套。`encode_body` 同样公开，发件箱入队时用它校验请求体（4.1）。
 - `core_base_url` 不以 `http://` 或 `https://` 开头、或以 `/` 结尾时，按「未配置」处理（`not_configured`），不发请求。
 - 只返回分类后的结果，不抛业务异常；网络层异常也在这里分类。
 
@@ -179,7 +184,7 @@ send(settings, *, method, path, body=None, idempotency_key=None, actor=None, cre
 - **不提交**：只把行加进调用方的事务（`db.add` 加 `flush` 拿到 `id`），由调用方和它的业务变化一起提交——这就是「先落库」。
 - `idempotency_key = "inv:" + kind + ":" + 32 个十六进制字符的随机串`（`secrets.token_hex(16)`），入队时生成、存进行里、之后永不改；长度不超过 128（`kind` 最长 40）。
 - `status = queued`、`attempts = 0`、`next_attempt_at = now`、`created_at = now`，`last_claimed_at`、`resolved_at` 为空。
-- 检查（不合格报 `ValueError`，什么都不写）：`kind` 符合 `[a-z][a-z0-9_.]{0,39}` 且已经登记了处理函数（4.5）；`method` 是 `POST` 或 `PATCH`；`path` 以 `/v1/` 开头且不超过 255 个字符；`actor` 的两个值都符合 3.2 的格式；`body` 能按 3.2 的方式编码成 JSON。也就是说 3.2 发出前的全部校验在入队时就做一遍，能入队的命令发送时不会因校验失败。
+- 检查（不合格报 `ValueError`，什么都不写）：`kind` 符合 `[a-z][a-z0-9_.]{0,39}` 且已经登记了处理函数（4.5）；`method` 是 `POST` 或 `PATCH`；`path` 以 `/v1/` 开头且不超过 255 个字符；`actor` 的两个值都符合 3.2 的格式；`body` 能用 3.2 的 `encode_body` 编码（含 `NaN`、`Infinity` 的请求体因此在入队时就被拒，不会在写库时才出数据库错误）。也就是说 3.2 发出前的全部校验在入队时就做一遍，能入队的命令发送时不会因校验失败。
 - **重试一条被拒的命令 = 入队一条新命令**（新键），并把旧的那条标为已处理（4.2 的 `resolve`）。本层不提供「把 rejected 改回 queued」。
 
 ### 4.2 能不能发
@@ -200,7 +205,7 @@ send(settings, *, method, path, body=None, idempotency_key=None, actor=None, cre
 
 `process_one(session_factory, settings, *, now, transport=None) -> int | None`（返回处理的命令 id，没有可发的返回 `None`）：
 
-1. **先看配置**：`core_base_url` 不合格、或业务令牌文件读不到或内容不合格（同 3.1、3.2 的判定），就**什么都不认领**，直接返回 `None`（`drain` 随之停止）。未配置期间没有任何命令被认领，也就没有命令的 `last_claimed_at` 因此被设上。
+1. **先看配置**：`check_configured(settings, "business")`（3.2）为假，就**什么都不认领**，直接返回 `None`（`drain` 随之停止）。未配置期间没有任何命令被认领，也就没有命令的 `last_claimed_at` 因此被设上。
 2. **认领**（短事务）：一条查询同时满足 4.2 的三个条件，被阻塞的命令根本不会被选中，不会占住名额：
    `SELECT c.* FROM core_outbox_commands c WHERE c.status='queued' AND c.next_attempt_at <= :now AND (c.lease_until IS NULL OR c.lease_until <= :now) AND NOT EXISTS (SELECT 1 FROM core_outbox_commands p WHERE p.ordering_key = c.ordering_key AND p.id < c.id AND NOT (p.status IN ('succeeded','cancelled') OR (p.status IN ('rejected','failed') AND p.resolved_at IS NOT NULL))) ORDER BY c.next_attempt_at, c.id LIMIT 1 FOR UPDATE OF c SKIP LOCKED`
    （`ordering_key` 为空时 `p.ordering_key = c.ordering_key` 不成立，子查询为空，自然可发）。选中就设 `lease_until = now + 60 秒`，`last_claimed_at` 为空时设为 `now`，提交；没有就返回 `None`。
@@ -216,10 +221,11 @@ send(settings, *, method, path, body=None, idempotency_key=None, actor=None, cre
 | `rejected` | +1 | `rejected` | `response_body`、`error_code`、`finished_at`；调 `on_rejected` |
 | `caller_error` | +1 | `failed` | `error_code`、`finished_at`；**不调**处理函数（不是业务结果） |
 
-   每种情况都写 `last_outcome`、`http_status`、`core_request_id`，清掉 `lease_until`。处理函数和状态更新在**同一个事务**里提交。
+   除 `not_configured` 那一行外，每种情况都写 `last_outcome`、`http_status`、`core_request_id`、`error_code`（本次响应的错误码，没有错误码——包括成功与超时——时写 `NULL`，所以成功后不会留下旧的 `REQUEST_IN_PROGRESS`），清掉 `lease_until`。`error_code` 超过 64 个字符、`core_request_id` 超过 128 个字符时截断后存。处理函数和状态更新在**同一个事务**里提交。
    - 处理函数抛异常，或这条命令的 `kind` 已不在登记表里（只在分类是 `succeeded`、`rejected`、要调处理函数时才检查）：整个事务回滚，命令保持原样（`lease_until` 仍是认领时的值，到期后会再发——Core 同键重放同一结果，处理函数再执行一次，所以处理函数必须能在「首次执行失败回滚」后安全地再执行）。`process_one` 记一条进程日志（命令 id、`kind`、异常类名），**不再抛出**，返回这条命令的 id；`drain` 继续处理下一条。
    - `send` 抛出任何异常（3.2 归类之外的，只可能是编程错误）：记 `status = failed`、`attempts` +1（可能已发出）、`last_outcome = caller_error`、`error_code = CLIENT_EXCEPTION`、`finished_at`；`http_status`、`core_request_id` 不改；不调处理函数，清租约；记进程日志（异常类名）。
    - `retry_after` 为 `None` 时按 0 算。
+   - 记结果的事务因为别的原因失败（数据库错误等）：回滚，记进程日志（命令 id 与异常类名），`process_one` 不抛出、返回这条命令的 id；租约到期后会同键重发。
 5. **退避**：`退避 = min(5 × 2^(attempts−1), 600)` 秒（`attempts` 是加一之后的值）：5、10、20、40……封顶 10 分钟。没有随机抖动（单进程、单发送者，不需要；也让测试确定）。
 6. 一直重试，不设上限：结果未知的命令永远不能自己放弃（原则 2）。积压多久要告警由 W8 根据 `first_unknown_at`、`attempts` 判断。
 
@@ -279,7 +285,7 @@ register_job(name, *, interval_seconds, run)
 - `run(session_factory, settings, now_fn)`：同步函数；`interval_seconds` 是两次开始之间的最短间隔。
 - 同名重复登记报 `ValueError`；另有只给测试用的 `unregister_job(name)`。
 - `core_outbox.drain`（每 5 秒，调 4.3 的 `drain`）在 `app/scheduler.py` 模块底部登记，import 即登记。之后的工作包在各自模块里登记自己的作业（补拉、对账、清理过期登录尝试等），由 `app/scheduler.py` 统一 import。
-- 跑一轮的入口：`run_once(session_factory, settings, *, owner, now_fn, jobs=None)`，`jobs` 为作业名列表，为空表示全部已登记的作业；测试用它指定 `owner`（模拟两个调度器）、时间与只跑某个作业。线程每次醒来就调一次 `run_once`。
+- 跑一轮的入口：`run_once(session_factory, settings, *, owner, now_fn, jobs=None)`（每处理一个作业都重新调一次 `now_fn()` 作为这个作业的「现在」，不在一轮开头只取一次），`jobs` 为作业名列表，为空表示全部已登记的作业；测试用它指定 `owner`（模拟两个调度器）、时间与只跑某个作业。线程每次醒来就调一次 `run_once`。
 
 ### 5.2 运行
 
@@ -326,8 +332,8 @@ Core 生产实例就绪、签发了凭据之后（Core 契约 §10 第 2 条：�
 | 换 Core 凭据（不是轮换令牌） | 运营步骤：先等发件箱里所有已认领过（`last_claimed_at` 非空）且仍 `queued` 的命令拿到确定结果，再换 | 新凭据的 `credential_id` 不同，幂等作用域随之改变（§10 第 4 条）；可能已发出的命令换凭据重发可能生效两次（业务引用这一层会挡住同一事实，但不同内容会 409） |
 | 502 当作确定未生效 | 是 | 见 3.3；部署形态变了要重议 |
 | 单进程发送 | 是 | V1 只有一个 API 容器；租约与 `SKIP LOCKED` 保证换容器时不会重复发送 |
-| 调度器租约 300 秒 | 是 | 作业跑超过 5 分钟时可能被另一个进程同时执行；V1 的作业（发件箱一批 50 条）远小于此；长作业（对账）在它们自己的设计里分批 |
+| 调度器租约 300 秒 | 是 | 作业跑超过 5 分钟时，租约到期，可能被另一个进程同时执行。发件箱的 `drain` 在 Core 不可用时可能跑满 50 × 15 = 750 秒，所以**两个 drain 重叠是会发生的**；这是安全的：每条命令由发件箱自己的租约与 `SKIP LOCKED` 保证只被一个发送者处理（4.4），重叠只是并行发不同的命令。之后登记的作业必须同样能容忍重叠执行（在各自的设计里说明）；做不到的要自己加锁或分批 |
 
 ## 8. 修订记录
 
-- **0.1**（2026-11-23）：草案。同日按设计预审补齐：JSON 空值存 SQL `NULL`、`attempts` 的库侧默认值；超时只有一个值、哪些异常归未知、发出前的校验、没有错误体的 4xx、`Retry-After` 的解析；认领改为一条查询排除被阻塞的命令（原写法会被阻塞命令占满而卡住整个发件箱）；取消改为只允许确定从未发出的命令；入队时就做发出前的全部校验；处理函数异常与 `send` 异常的处理；命令种类与作业的登记、测试用的移除与 `run_once` 入口；调度器自身数据库错误的处理。第二轮预审后：被拒或失败的命令可由业务层 `resolve`，不再永远挡住同一订单（新增 `resolved_at`）；取消改看只写一次的 `last_claimed_at`，未配置时不认领（原写法下，发出后崩溃的命令在一次未配置后会被误判为可取消）；两张表用 `utf8mb4_bin`；令牌格式先校验再用；`request_id` 的来源、`data` 必须是对象、1xx 与超范围状态码、校验先于配置判定；`send` 异常时的 `attempts`；`drain` 传 `transport`。
+- **0.1**（2026-11-23）：草案。同日按设计预审补齐：JSON 空值存 SQL `NULL`、`attempts` 的库侧默认值；超时只有一个值、哪些异常归未知、发出前的校验、没有错误体的 4xx、`Retry-After` 的解析；认领改为一条查询排除被阻塞的命令（原写法会被阻塞命令占满而卡住整个发件箱）；取消改为只允许确定从未发出的命令；入队时就做发出前的全部校验；处理函数异常与 `send` 异常的处理；命令种类与作业的登记、测试用的移除与 `run_once` 入口；调度器自身数据库错误的处理。第二轮预审后：被拒或失败的命令可由业务层 `resolve`，不再永远挡住同一订单（新增 `resolved_at`）；取消改看只写一次的 `last_claimed_at`，未配置时不认领（原写法下，发出后崩溃的命令在一次未配置后会被误判为可取消）；两张表用 `utf8mb4_bin`；令牌格式先校验再用；`request_id` 的来源、`data` 必须是对象、1xx 与超范围状态码、校验先于配置判定；`send` 异常时的 `attempts`；`drain` 传 `transport`。第三轮预审后：请求体编码关掉 `allow_nan`、公开 `encode_body` 与 `check_configured`；可覆盖的超时；不用环境代理、不跟随重定向的 opener 写法；响应头小写查找；不 `import ssl`；`credential` 取值校验；记结果时 `error_code` 每次覆盖、超长截断、事务失败的处理；`run_once` 每个作业重新取时间；改正调度器租约的理由（drain 可能超过 300 秒而重叠，靠发件箱租约保证安全）。

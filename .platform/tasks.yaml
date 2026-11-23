@@ -232,7 +232,7 @@ tasks:
     depends_on: []
     acceptance_criteria:
       - Settings 新增 core_base_url、core_token_file、core_ops_token_file 三项，都可以不设，按设计 3.1；令牌每次请求读文件，不缓存，不进日志、异常消息、repr 或数据库
-      - send 在 app/core_client/http.py，参数、请求头、请求体编码、超时与不跟随重定向按设计 3.2；幂等键、请求 ID、操作者角色不合格时在发出前报 ValueError
+      - send、encode_body、check_configured 在 app/core_client/http.py，参数、请求头、请求体编码（不接受 NaN 与 Infinity）、可覆盖的超时、不用环境代理与不跟随重定向按设计 3.2；不 import ssl；凭据种类、幂等键、请求 ID、操作者不合格时在发出前报 ValueError
       - 响应按设计 3.3 的判定顺序分成 not_configured、unknown、retry、succeeded、caller_error、rejected 六类，CoreResponse 的字段与设计一致
       - 单元测试 tests/unit/test_core_client_http.py 用 unittest 写法、注入假的发送函数，覆盖例子 C0 至 C10、发出前的校验与请求头内容；不连网络，由 PR 的必需 CI 检查 unit 执行并通过
       - 集成测试 tests/integration/test_core_client_transport.py 用本机临时 HTTP 服务验证真实的 urllib 发送：请求头与请求体原样到达、超时归为 unknown、3xx 不跟随；由 PR 的必需 CI 检查 integration 执行并通过
