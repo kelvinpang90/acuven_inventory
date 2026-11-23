@@ -29,7 +29,7 @@
 沿用 `app/db.py` 的 `Base` 与命名约定；指向账号的外键一律 `ON DELETE RESTRICT`。
 
 **时间**：一律是不带时区的 UTC、**精确到整秒**（`DateTime`，即 MySQL 的 `DATETIME`，不带小数秒）。规则层只从一处取当前时间：
-`datetime.now(UTC).replace(tzinfo=None, microsecond=0)`（截断，不四舍五入）；测试与调用方传入的时间也必须是整秒，带小数秒时报 `ValueError`。
+`datetime.now(UTC).replace(tzinfo=None, microsecond=0)`（截断，不四舍五入）；测试与调用方传入的时间也必须是不带时区（`tzinfo` 为 `None`）的整秒，带时区或带小数秒时报 `ValueError`。
 由此存进库的时间与算出来的时间完全相同，4.2 的窗口、4.4 的到期与 5.1 的 `expires_at` 不会差一秒。
 
 **`admin_accounts`**
@@ -107,7 +107,7 @@
 - `throttle_key = SHA-256 十六进制( UTF-8( 来源 + "\n" + 规范用户名 ) )`，规范用户名见 4.1（合法与否都用它算），来源的取法见 5.3。
   提交的用户名含无法按 UTF-8 编码的字符时，按 `errors="replace"` 编码后再算（只用于计数，不查库）。
 - **失败**指 `outcome` 为 `bad_password`、`unknown_user`、`disabled` 的尝试。`locked` 不算失败（被锁时继续尝试不会延长锁定），`success` 不清零。
-- 一次登录开始时，数同一 `throttle_key`、`occurred_at > 现在 − 60 分钟`（严格大于）的失败条数；**满 10 条即拒绝**：不查账号、不校验密码，写一条 `locked`，回答「已锁定」。
+- 一次登录开始时，数同一 `throttle_key`、`现在 − 60 分钟 < occurred_at <= 现在` 的失败条数（下界严格大于，上界含等于；时间在「现在」之后的记录不算）；**满 10 条即拒绝**：不查账号、不校验密码，写一条 `locked`，回答「已锁定」。
 - 锁定随最早的那条失败滑出 60 分钟窗口而自动解除，没有人工解锁命令；解除后照常校验密码。
 - 只锁「来源 + 用户名」的组合：从别处的来源对同一用户名的尝试不受影响，攻击者无法从自己的地址把管理员锁在外面。
 - 并发：两个请求同时读到 9 条失败，都会去校验密码，最多多出几条失败；不为此加锁（单人后台，可接受）。
@@ -174,6 +174,7 @@
   - `reset_password(db, *, username, password, now) -> None`
   - `disable_account(db, *, username, now) -> bool`（`False` = 原本已停用，未改）
   - `enable_account(db, *, username) -> bool`（`False` = 原本未停用，未改）
+  - 四个函数都先按 4.1 把 `username` 转成规范用户名，不合法即抛 `invalid_username`、不查库；查库只用规范用户名。
   - 业务错误抛 `AccountError`，带 `code`：`invalid_username`、`already_exists`、`not_found`、`weak_password`（消息不含密码）。`create_account` 撞上唯一约束的 `IntegrityError` 时回滚并转成 `already_exists`。
   - 命令只负责解析参数、提示输入密码、取当前时间（第 3 节的取法）、调这些函数、把结果与错误转成输出和退出码；命令开始前的「用户名合法、存在与否」检查用同一模块里的只读查询，不另写规则。
 - 入口是 `main(argv: list[str] | None = None) -> int`，`if __name__ == "__main__": sys.exit(main())`；测试直接调 `main([...])`，替换 `getpass.getpass` 提供输入。
@@ -255,4 +256,4 @@ TLS 在边缘反向代理终止，浏览器看到的是 HTTPS，所以 `Secure` 
 ## 8. 修订记录
 
 - **0.1**（2026-11-23）：草案。同日按三个任务的设计预审补齐：时间截断到整秒；登录时规范用户名不合法即不查库（避开 MySQL 排序规则的大小写与重音不敏感）；
-  密码的编码与 scrypt 的 `maxmem`；账号命令的退出码与先校验后提示；服务函数的签名与返回值（含账号变更的服务函数）；登录与账号变更对账号行加锁，避免撤销全部会话后又冒出新会话；登录请求体不回显提交值的 422；数据库出错时的 503；来源头的部署前提与残余风险。
+  密码的编码与 scrypt 的 `maxmem`；账号命令的退出码与先校验后提示；服务函数的签名与返回值（含账号变更的服务函数）；登录与账号变更对账号行加锁，避免撤销全部会话后又冒出新会话；登录请求体不回显提交值的 422；数据库出错时的 503；来源头的部署前提与残余风险；`now` 不得带时区、失败计数的窗口上界、账号变更先规范化用户名。
