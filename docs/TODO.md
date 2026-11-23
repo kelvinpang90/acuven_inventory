@@ -1,6 +1,6 @@
 # TODO — 开发任务清单
 
-> 最后更新：2026-11-23（登记 INVENTORY-TASK-001～004，后台登录四层，设计见 [ADMIN_AUTH_DESIGN.md](ADMIN_AUTH_DESIGN.md)；工作包与先后见 [V1_MINIMAL_DESIGN.md](V1_MINIMAL_DESIGN.md) 第 15 节）
+> 最后更新：2026-11-23（登记 INVENTORY-TASK-001～004（后台登录，[ADMIN_AUTH_DESIGN.md](ADMIN_AUTH_DESIGN.md)）与 005～008（Core 客户端与发件箱，[CORE_CLIENT_DESIGN.md](CORE_CLIENT_DESIGN.md)）；工作包与先后见 [V1_MINIMAL_DESIGN.md](V1_MINIMAL_DESIGN.md) 第 15 节）
 
 ---
 
@@ -30,6 +30,10 @@
 2. `INVENTORY-TASK-002` 管理员密码哈希、登录锁定、后台会话与账号变更规则
 3. `INVENTORY-TASK-003` 服务器上建号、改密、停用与恢复管理员账号的命令
 4. `INVENTORY-TASK-004` 管理员登录、退出与会话接口
+5. `INVENTORY-TASK-005` Core 命令发件箱与定时作业表的数据模型
+6. `INVENTORY-TASK-006` 只用标准库的 Core HTTP 客户端与响应分类
+7. `INVENTORY-TASK-007` Core 命令发件箱的入队、顺序、发送、重试与结果回调
+8. `INVENTORY-TASK-008` 进程内定时作业调度器与发件箱作业的启动接线
 
 ### 已阻塞
 - 待登记：目录、期初与上线切换的真实数据导入｜阻塞：Stock Core 契约修订、生产实例与恢复演练尚未完成
@@ -37,7 +41,6 @@
 
 ### 后续计划
 - 待登记：两个平台授权回调的 state 校验与换令牌
-- 待登记：Stock Core 客户端与命令发件箱
 - 待登记：平台连接、令牌加密存储、刷新与撤权处理
 - 待登记：目录、期初与上线切换、库存总览、安全库存与配额
 - 待登记：事件收件箱、去重与平台订单转 Core 命令，人工模式

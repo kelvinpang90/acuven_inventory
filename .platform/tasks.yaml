@@ -190,3 +190,120 @@ tasks:
       - format.check
     creates_branch: true
     creates_pull_request: true
+
+  # W1：Core 客户端、命令发件箱与进程内调度，分四层，依据 docs/CORE_CLIENT_DESIGN.md（幂等与发件箱状态机，设计闸门）。
+  # 本层只建发件箱与作业两张表及迁移 0002。
+  - id: INVENTORY-TASK-005
+    title: Core 命令发件箱与定时作业表的数据模型
+    purpose: >-
+      W1 的数据层（Core 客户端设计补充第 2 节）：建 core_outbox_commands 与 scheduled_jobs 两张表及其约束与索引，写迁移 0002。
+      只建表与约束：不写 HTTP 客户端、发件箱逻辑或调度器，不改 app/main.py、app/config.py、前端、.platform/、CI、部署配置或设计文档，不装依赖。
+      后面依次是 INVENTORY-TASK-006（HTTP 客户端）、007（发件箱服务）、008（调度器）。
+    status: ready
+    depends_on:
+      - INVENTORY-TASK-001
+    acceptance_criteria:
+      - 两张表的列、类型、可空、默认值、唯一约束、检查约束与索引逐项符合 Core 客户端设计补充第 2 节，约束与索引名与设计一致；时间列是不带时区的 UTC
+      - 模型在 app/models/core_outbox.py 与 app/models/scheduled_job.py，app/models/__init__.py 导出 CoreOutboxCommand、ScheduledJob
+      - 迁移 alembic/versions/20261123_0002_core_outbox_and_jobs.py 的 revision 为 0002、down_revision 为 0001；upgrade 建两张表并写出全部约束与索引名，downgrade 删两张表；CI 的 integration 检查里迁移往返与 alembic check 通过
+      - 集成测试 tests/integration/test_core_outbox_models.py 用 alembic 的 upgrade 按迁移建表，逐条验证设计第 2 节的例子 D1 至 D4，结束时 downgrade 到 base；没有测试库时跳过；测试由 PR 的必需 CI 检查 integration 执行并通过
+      - 改动只落在 allowed_change_paths；不改 .platform/、CI、部署配置；不装依赖
+      - allowed_commands 里的检查全部零退出，skipped 如实报告且不算 passed；以 Draft PR 交付，不合并、不直推
+    allowed_change_paths:
+      - app/models/__init__.py
+      - app/models/core_outbox.py
+      - app/models/scheduled_job.py
+      - alembic/versions/20261123_0002_core_outbox_and_jobs.py
+      - tests/integration/test_core_outbox_models.py
+    allowed_commands:
+      - lint.check
+      - format.check
+    creates_branch: true
+    creates_pull_request: true
+
+  # W1 的 HTTP 层：只用标准库 urllib 发请求、读令牌文件、按 Core 契约把响应分成六类。不碰数据库。
+  # 单元测试用假的发送函数，不连网络，沙箱里可跑；真实 urllib 发送用本机临时 HTTP 服务测，只在 CI 的 integration 跑。
+  - id: INVENTORY-TASK-006
+    title: 只用标准库的 Core HTTP 客户端与响应分类
+    purpose: >-
+      W1 的 Core HTTP 客户端（Core 客户端设计补充第 3 节）：三个配置项、每次请求读令牌文件、请求头与幂等键格式校验、
+      超时、按六类分类响应。只用标准库，不加依赖；不碰数据库、发件箱或调度器，不改 app/main.py、.platform/、CI、部署配置或设计文档。
+    status: ready
+    depends_on: []
+    acceptance_criteria:
+      - Settings 新增 core_base_url、core_token_file、core_ops_token_file 三项，都可以不设，按设计 3.1；令牌每次请求读文件，不缓存，不进日志、异常消息、repr 或数据库
+      - send 在 app/core_client/http.py，参数、请求头、请求体编码、超时与不跟随重定向按设计 3.2；幂等键、请求 ID、操作者角色不合格时在发出前报 ValueError
+      - 响应按设计 3.3 的判定顺序分成 not_configured、unknown、retry、succeeded、caller_error、rejected 六类，CoreResponse 的字段与设计一致
+      - 单元测试 tests/unit/test_core_client_http.py 用 unittest 写法、注入假的发送函数，覆盖例子 C1 至 C10 与请求头内容；不连网络，由 PR 的必需 CI 检查 unit 执行并通过
+      - 集成测试 tests/integration/test_core_client_transport.py 用本机临时 HTTP 服务验证真实的 urllib 发送：请求头与请求体原样到达、超时归为 unknown、3xx 不跟随；由 PR 的必需 CI 检查 integration 执行并通过
+      - 改动只落在 allowed_change_paths；不改 .platform/、CI、部署配置；不装依赖
+      - allowed_commands 里的检查全部零退出，skipped 如实报告且不算 passed；以 Draft PR 交付，不合并、不直推
+    allowed_change_paths:
+      - app/config.py
+      - app/core_client/__init__.py
+      - app/core_client/http.py
+      - tests/unit/test_core_client_http.py
+      - tests/integration/test_core_client_transport.py
+    allowed_commands:
+      - lint.check
+      - format.check
+      - tests.unit
+    creates_branch: true
+    creates_pull_request: true
+
+  # W1 的发件箱服务：入队不提交、按顺序键排队、认领加租约、发送、按分类记结果、退避、命令种类的处理函数、取消。
+  - id: INVENTORY-TASK-007
+    title: Core 命令发件箱的入队、顺序、发送、重试与结果回调
+    purpose: >-
+      W1 的发件箱服务（Core 客户端设计补充第 4 节）：入队与幂等键、可发条件与按订单的顺序、认领与租约、按分类记结果与退避、
+      命令种类登记与处理函数的事务边界、取消。不登记任何真实命令种类（由之后的工作包登记），不写调度器，
+      不改数据模型、HTTP 客户端、app/main.py、.platform/、CI、部署配置或设计文档，不装依赖。
+    status: ready
+    depends_on:
+      - INVENTORY-TASK-002
+      - INVENTORY-TASK-005
+      - INVENTORY-TASK-006
+    acceptance_criteria:
+      - enqueue、process_one、drain、register_kind、cancel 在 app/services/core_outbox.py，签名与行为按设计 4.1 至 4.6；入队只加进调用方的事务、不提交；幂等键入队时生成且之后不改
+      - 可发条件按设计 4.2：同一顺序键下更小 id 的命令全部成功或取消才发；认领用 FOR UPDATE SKIP LOCKED 加 60 秒租约，记结果时租约对不上就放弃
+      - 六类结果的处理、退避公式与 first_unknown_at 按设计 4.3 的表；处理函数与状态更新在同一事务，处理函数抛异常时整体回滚
+      - 集成测试 tests/integration/test_core_outbox_service.py 对真 MySQL、用假的发送函数与只在测试里登记的命令种类，覆盖例子 O1 至 O12，时间由参数传入且是整秒；用 Base.metadata 建表、测试结束删表；没有测试库时跳过；测试由 PR 的必需 CI 检查 integration 执行并通过
+      - 改动只落在 allowed_change_paths；不改 .platform/、CI、部署配置；不装依赖
+      - allowed_commands 里的检查全部零退出，skipped 如实报告且不算 passed；以 Draft PR 交付，不合并、不直推
+    allowed_change_paths:
+      - app/services/core_outbox.py
+      - tests/integration/test_core_outbox_service.py
+    allowed_commands:
+      - lint.check
+      - format.check
+    creates_branch: true
+    creates_pull_request: true
+
+  # W1 的调度器：后台线程、作业登记、按作业表抢租约执行、应用启动接线。依赖 004 只是为了与它先后改 app/main.py，避免冲突。
+  - id: INVENTORY-TASK-008
+    title: 进程内定时作业调度器与发件箱作业的启动接线
+    purpose: >-
+      W1 的调度器（Core 客户端设计补充第 5 节）：作业登记、后台线程按 scheduled_jobs 抢租约执行、异常不中断线程、
+      由 scheduler_enabled 决定是否在应用启动时开线程，并登记 core_outbox.drain 作业。不改发件箱、HTTP 客户端与数据模型、
+      .platform/、CI、部署配置或设计文档，不装依赖；打开生产调度器是上线步骤，不在本任务。
+    status: ready
+    depends_on:
+      - INVENTORY-TASK-004
+      - INVENTORY-TASK-007
+    acceptance_criteria:
+      - register_job 与调度线程在 app/scheduler.py，抢租约、执行、记结果与租约到期接手按设计 5.2；作业异常只记异常类名，线程继续
+      - Settings 新增 scheduler_enabled，默认假；create_app 用 lifespan 在它为真且配置了数据库时启动线程、停止时最多等 20 秒；为假时不启动任何后台线程
+      - 登记 core_outbox.drain 作业，间隔 5 秒，调用发件箱的 drain；/readyz 的行为不变
+      - 集成测试 tests/integration/test_scheduler.py 对真 MySQL 覆盖例子 J1 至 J5，时间由参数传入；用 Base.metadata 建表、测试结束删表；没有测试库时跳过需要数据库的用例；测试由 PR 的必需 CI 检查 integration 执行并通过
+      - 改动只落在 allowed_change_paths；不改 .platform/、CI、部署配置；不装依赖
+      - allowed_commands 里的检查全部零退出，skipped 如实报告且不算 passed；以 Draft PR 交付，不合并、不直推
+    allowed_change_paths:
+      - app/scheduler.py
+      - app/config.py
+      - app/main.py
+      - tests/integration/test_scheduler.py
+    allowed_commands:
+      - lint.check
+      - format.check
+    creates_branch: true
+    creates_pull_request: true
