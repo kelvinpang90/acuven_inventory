@@ -234,7 +234,7 @@ tasks:
       - Settings 新增 core_base_url、core_token_file、core_ops_token_file 三项，都可以不设，按设计 3.1；令牌每次请求读文件，不缓存，不进日志、异常消息、repr 或数据库
       - send 在 app/core_client/http.py，参数、请求头、请求体编码、超时与不跟随重定向按设计 3.2；幂等键、请求 ID、操作者角色不合格时在发出前报 ValueError
       - 响应按设计 3.3 的判定顺序分成 not_configured、unknown、retry、succeeded、caller_error、rejected 六类，CoreResponse 的字段与设计一致
-      - 单元测试 tests/unit/test_core_client_http.py 用 unittest 写法、注入假的发送函数，覆盖例子 C1 至 C10 与请求头内容；不连网络，由 PR 的必需 CI 检查 unit 执行并通过
+      - 单元测试 tests/unit/test_core_client_http.py 用 unittest 写法、注入假的发送函数，覆盖例子 C0 至 C10、发出前的校验与请求头内容；不连网络，由 PR 的必需 CI 检查 unit 执行并通过
       - 集成测试 tests/integration/test_core_client_transport.py 用本机临时 HTTP 服务验证真实的 urllib 发送：请求头与请求体原样到达、超时归为 unknown、3xx 不跟随；由 PR 的必需 CI 检查 integration 执行并通过
       - 改动只落在 allowed_change_paths；不改 .platform/、CI、部署配置；不装依赖
       - allowed_commands 里的检查全部零退出，skipped 如实报告且不算 passed；以 Draft PR 交付，不合并、不直推
@@ -265,9 +265,9 @@ tasks:
       - INVENTORY-TASK-006
     acceptance_criteria:
       - enqueue、process_one、drain、register_kind、cancel 在 app/services/core_outbox.py，签名与行为按设计 4.1 至 4.6；入队只加进调用方的事务、不提交；幂等键入队时生成且之后不改
-      - 可发条件按设计 4.2：同一顺序键下更小 id 的命令全部成功或取消才发；认领用 FOR UPDATE SKIP LOCKED 加 60 秒租约，记结果时租约对不上就放弃
+      - 可发条件按设计 4.2：同一顺序键下更小 id 的命令全部成功或取消才发；认领用设计 4.3 第 1 步的一条查询（被阻塞的命令不被选中）加 60 秒租约，记结果时租约对不上就放弃；取消只允许确定从未发出的命令
       - 六类结果的处理、退避公式与 first_unknown_at 按设计 4.3 的表；处理函数与状态更新在同一事务，处理函数抛异常时整体回滚
-      - 集成测试 tests/integration/test_core_outbox_service.py 对真 MySQL、用假的发送函数与只在测试里登记的命令种类，覆盖例子 O1 至 O12，时间由参数传入且是整秒；用 Base.metadata 建表、测试结束删表；没有测试库时跳过；测试由 PR 的必需 CI 检查 integration 执行并通过
+      - 集成测试 tests/integration/test_core_outbox_service.py 对真 MySQL、用假的发送函数与只在测试里登记的命令种类，覆盖例子 O1 至 O14，时间由参数传入且是整秒；用 Base.metadata 建表、测试结束删表；没有测试库时跳过；测试由 PR 的必需 CI 检查 integration 执行并通过
       - 改动只落在 allowed_change_paths；不改 .platform/、CI、部署配置；不装依赖
       - allowed_commands 里的检查全部零退出，skipped 如实报告且不算 passed；以 Draft PR 交付，不合并、不直推
     allowed_change_paths:
@@ -291,7 +291,7 @@ tasks:
       - INVENTORY-TASK-004
       - INVENTORY-TASK-007
     acceptance_criteria:
-      - register_job 与调度线程在 app/scheduler.py，抢租约、执行、记结果与租约到期接手按设计 5.2；作业异常只记异常类名，线程继续
+      - register_job、run_once 与调度线程在 app/scheduler.py，抢租约、执行、记结果与租约到期接手按设计 5.1 与 5.2；作业异常与调度器自身的数据库错误只记异常类名，线程继续
       - Settings 新增 scheduler_enabled，默认假；create_app 用 lifespan 在它为真且配置了数据库时启动线程、停止时最多等 20 秒；为假时不启动任何后台线程
       - 登记 core_outbox.drain 作业，间隔 5 秒，调用发件箱的 drain；/readyz 的行为不变
       - 集成测试 tests/integration/test_scheduler.py 对真 MySQL 覆盖例子 J1 至 J5，时间由参数传入；用 Base.metadata 建表、测试结束删表；没有测试库时跳过需要数据库的用例；测试由 PR 的必需 CI 检查 integration 执行并通过
