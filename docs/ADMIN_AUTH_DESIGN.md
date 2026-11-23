@@ -127,6 +127,7 @@
 
 1. 算 `throttle_key`；按 4.2 数失败，满 10 条 → 写 `locked`（`admin_account_id` 为空），提交，返回「已锁定」。
 2. 规范用户名不合法（4.1），或按它查不到账号 → 对 `DUMMY_PASSWORD_HASH` 校验一次，写 `unknown_user`（`admin_account_id` 为空），提交，返回「凭据无效」。
+   查账号用 `SELECT … FOR UPDATE`，**锁住账号行到本事务提交**（见 4.4 的「并发」）。
 3. 校验密码。不通过 → 写 `bad_password`（带账号 id），提交，返回「凭据无效」。
 4. 账号已停用 → 写 `disabled`（带账号 id），提交，返回「凭据无效」（与密码错误不可区分；先校验密码再看停用，耗时一致）。
 5. 建会话（4.4），写 `success`（带账号 id），提交，返回账号与会话令牌原文。
@@ -142,7 +143,10 @@
 - **有效期**：自登录起 **12 小时**绝对到期，使用中不延长。
 - **解析**：`resolve_session(db, *, token, now) -> ActiveSession | None`。按 `token_hash` 找会话；`revoked_at` 为空、`expires_at > 现在`、账号 `disabled_at` 为空，三条都成立才返回
   `ActiveSession(session_id, account_id, username, expires_at)`（不可变数据类），否则返回 `None`。`token` 为空串或不是字符串时直接返回 `None`。只读，不提交。
-- **撤销**：`revoke_session(db, *, session_id, now) -> None`，把该会话的 `revoked_at` 设为现在并提交；已撤销的再撤销不改原值。重设密码、停用账号时撤销该账号**全部**未撤销的会话（与改账号在同一事务）。
+- **撤销**：`revoke_session(db, *, session_id, now) -> None`，把该会话的 `revoked_at` 设为现在并提交；已撤销的再撤销不改原值；没有这个 `session_id` 时什么都不做、不报错。重设密码、停用账号时撤销该账号**全部**未撤销的会话（与改账号在同一事务）。
+- **并发**：登录（4.3）与重设密码、停用、启用（4.5）都先对账号行 `SELECT … FOR UPDATE`，在同一事务里改完才提交，所以对同一账号是串行的：
+  停用先提交时，排在后面的登录看到 `disabled_at` 已设，写 `disabled`；登录先提交时，它建的会话已在库里，随后的停用把它一起撤销。重设密码同理（后到的登录用新哈希校验）。
+  不会出现「撤销全部会话之后又冒出一条有效会话」。
 - **CSRF 令牌**：`csrf_token_for(token) -> str`，`HMAC-SHA256(key=会话令牌原文的 UTF-8 字节, msg=b"inventory-admin-csrf")` 的十六进制，**不入库**，随时可由 cookie 里的会话令牌重算；
   `csrf_token_matches(token, presented) -> bool` 用 `hmac.compare_digest` 比较，`presented` 为空或不是字符串时为 `False`。浏览器脚本读不到 HttpOnly 的会话 cookie，只能从接口响应拿到 CSRF 令牌。
 - 以上函数与 `authenticate` 都在 `app/services/admin_auth.py`，接口层（第 5 节）只调用它们，不另写查询。
@@ -165,6 +169,13 @@
 | `disable-account` | 账号必须存在；已停用则输出「已是停用状态」、退出码 0、不改值；否则设 `disabled_at` 为现在并撤销全部会话 |
 | `enable-account` | 账号必须存在；未停用则输出「已是启用状态」、退出码 0、不改值；否则把 `disabled_at` 清空；不恢复已撤销的会话 |
 
+- **账号变更的服务函数**（在 `app/services/admin_auth.py`，各自完成并提交一个事务，时间由参数传入，测试的 S3、S4 直接调它们）：
+  - `create_account(db, *, username, password, now) -> int`（返回账号 id）
+  - `reset_password(db, *, username, password, now) -> None`
+  - `disable_account(db, *, username, now) -> bool`（`False` = 原本已停用，未改）
+  - `enable_account(db, *, username) -> bool`（`False` = 原本未停用，未改）
+  - 业务错误抛 `AccountError`，带 `code`：`invalid_username`、`already_exists`、`not_found`、`weak_password`（消息不含密码）。`create_account` 撞上唯一约束的 `IntegrityError` 时回滚并转成 `already_exists`。
+  - 命令只负责解析参数、提示输入密码、取当前时间（第 3 节的取法）、调这些函数、把结果与错误转成输出和退出码；命令开始前的「用户名合法、存在与否」检查用同一模块里的只读查询，不另写规则。
 - 入口是 `main(argv: list[str] | None = None) -> int`，`if __name__ == "__main__": sys.exit(main())`；测试直接调 `main([...])`，替换 `getpass.getpass` 提供输入。
 - 密码只经交互输入，不接受命令行参数或环境变量。
 - **退出码**：0 成功（含上面两种「已是……状态」）；1 业务错误或取消——用户名不合法、已存在（含并发建号撞上唯一约束的 `IntegrityError`）、不存在、密码不合规、两次不一致、输入密码时遇到 EOF 或 Ctrl+C（输出「已取消」，什么都不写）；
@@ -244,4 +255,4 @@ TLS 在边缘反向代理终止，浏览器看到的是 HTTPS，所以 `Secure` 
 ## 8. 修订记录
 
 - **0.1**（2026-11-23）：草案。同日按三个任务的设计预审补齐：时间截断到整秒；登录时规范用户名不合法即不查库（避开 MySQL 排序规则的大小写与重音不敏感）；
-  密码的编码与 scrypt 的 `maxmem`；账号命令的退出码与先校验后提示；服务函数的签名与返回值；登录请求体不回显提交值的 422；数据库出错时的 503；来源头的部署前提与残余风险。
+  密码的编码与 scrypt 的 `maxmem`；账号命令的退出码与先校验后提示；服务函数的签名与返回值（含账号变更的服务函数）；登录与账号变更对账号行加锁，避免撤销全部会话后又冒出新会话；登录请求体不回显提交值的 422；数据库出错时的 503；来源头的部署前提与残余风险。
