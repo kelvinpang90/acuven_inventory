@@ -30,9 +30,9 @@
 2. `INVENTORY-TASK-002` 管理员密码哈希、登录锁定、后台会话与账号变更规则
 3. `INVENTORY-TASK-003` 服务器上建号、改密、停用与恢复管理员账号的命令
 4. `INVENTORY-TASK-004` 管理员登录、退出与会话接口
-5. `INVENTORY-TASK-005` Core 命令发件箱与定时作业表的数据模型
+5. `INVENTORY-TASK-005` Core 命令发件箱、顺序锁与定时作业表的数据模型
 6. `INVENTORY-TASK-006` 只用标准库的 Core HTTP 客户端与响应分类
-7. `INVENTORY-TASK-007` Core 命令发件箱的入队、顺序、发送、重试与结果回调
+7. `INVENTORY-TASK-007` Core 命令发件箱的入队、顺序、发送、重试、回调与恢复
 8. `INVENTORY-TASK-008` 进程内定时作业调度器与发件箱作业的启动接线
 
 ### 已阻塞
