@@ -115,7 +115,7 @@
 
 - **地址合格**：先要求整串只含可见 ASCII（0x21–0x7E，不含空格、制表符、回车换行——`urlsplit` 会悄悄去掉这些字符，之后 `http.client` 却会报错），并且不含 `?`、`#`、`@`（`urlsplit` 对结尾的 `?`、`#` 解析出空的查询串与片段，单看解析结果会放行），再用 `urllib.parse.urlsplit` 解析，scheme 是 `http` 或 `https`，有主机名，端口能解析（访问 `.port` 不抛 `ValueError`），没有用户信息、查询串与片段，路径为空。不合格按「未配置」处理。
 - **令牌每次请求时读文件**，去掉首尾空白，不缓存：Core 轮换令牌时有最长 7 天的重叠期（§10 第 4 条），换文件即可生效，不用重启。
-- **令牌合格**：去掉首尾空白后是 1–512 个 `[A-Za-z0-9._~+/=-]` 字符（RFC 6750 的 b64token；Core 的令牌是 `csk_` 加 43 个 base64url 字符）。文件不存在、读不了、为空或内容不合格，都按「未配置」处理；进程日志（WARNING）只记是哪一个文件（业务或运维）或地址出了什么问题，**不记内容**；同一个问题每 10 分钟最多记一次（模块级记下上次记录的时间），免得每个调度周期都刷一条。这样含换行或非 ASCII 字符的令牌不会进到 HTTP 库里、再随异常消息带出来。
+- **令牌合格**：去掉首尾空白后是 1–512 个 `[A-Za-z0-9._~+/=-]` 字符（RFC 6750 的 b64token；Core 的令牌是 `csk_` 加 43 个 base64url 字符）。文件不存在、读不了、为空或内容不合格，都按「未配置」处理；进程日志（WARNING）只记是哪一个文件（业务或运维）或地址出了什么问题，**不记内容**；同一个问题每 10 分钟最多记一次，免得每个调度周期都刷一条：「同一个问题」= （业务或运维，问题种类）这一对，问题种类是地址为空、地址不合格、令牌文件路径为空、文件不存在或读不了、内容为空、内容不合格之一；计时用 `time.monotonic()`；模块级字典记下每一对上次记录的时间，另有只给测试用的 `reset_config_warnings()` 清空它。这样含换行或非 ASCII 字符的令牌不会进到 HTTP 库里、再随异常消息带出来。
 - 令牌只出现在 `Authorization` 头里；不进日志、异常消息、`repr`、数据库。
 - 仓库里不写真实地址：示例值放 `.env.example`（本任务不改它，由第 6 节的上线步骤补）。
 
@@ -144,18 +144,18 @@ check_configured(settings, credential="business") -> bool
   - 含 `NaN`、`Infinity`；
   - 有不能编码的对象（把 `TypeError` 转成 `ValueError`）；
   - 任何列表超过 100 个元素（Core 的批量上限，§8.1 第 7 步）；
-  - 嵌套超过 32 层（自引用的结构也因此被拒；检查用显式的栈或在递归前比较深度，不让 `RecursionError` 冒出来）；
+  - 嵌套超过 32 层（顶层对象算第 1 层，第 32 层的容器可以有，第 33 层就拒；自引用的结构也因此被拒；检查用显式的栈或在递归前比较深度，不让 `RecursionError` 冒出来）；
   - 编码后超过 128 KiB（§8.1 第 3 步）。
 - **`check_configured(settings, credential)`**：只判定「配置是否可用」（3.1 的地址与对应令牌文件），不发请求、**任何输入都不抛异常**（`credential` 不是 `business`、`ops` 时返回假）。发件箱（4.3 第 1 步）用它。`send` 内部用同一个私有函数一次读出「地址与令牌」（读不到或不合格即 `not_configured`），**只读一次令牌文件**、用读到的那个值发请求，不会出现检查时合格、发送时又去读一次的情况。
 - **`validate_request(*, method, path, body, idempotency_key, actor, request_id, credential)`**：公开的校验函数，做上面「校验」与 `encode_body` 的全部检查，不合格报 `ValueError`。`send` 与发件箱入队（4.1）都调它，不各写一套。
 - **请求头**：
   - `Authorization: Bearer <令牌>`；
-  - `Content-Type: application/json`（有请求体时）；
+  - `Content-Type: application/json`：`POST`、`PATCH` 一律带（包括没有请求体的；否则 urllib 会自己补上 `application/x-www-form-urlencoded`），`GET` 不带；
   - `Idempotency-Key`（写请求）；
   - `X-Request-ID`：调用方给的，不给就生成 `inv_` 加 26 个 `[A-Za-z0-9]` 随机字符；
   - `X-Actor-Ref`、`X-Actor-Role`：`actor` 不为空时两个都带，为空时都不带；
   - `User-Agent: acuven-inventory/<版本>`（§8.4 要求带名字与版本）；`<版本>` 是 `settings.git_sha`，不符合 1–64 个 `[A-Za-z0-9._-]` 字符时用 `unknown`。
-- **transport**：可替换的发送函数（测试注入假的，生产用 urllib），签名 `(method, url, headers, body_bytes, timeout) -> (status, headers, body_bytes)`；`body_bytes` 在 `GET` 时为 `None`，在没有请求体的 `POST`、`PATCH` 时为 `b""`（发 `Content-Length: 0`、不带 `Content-Type`，Core 按「没有请求体」处理，§8.1 第 7 步）；请求头传 `dict[str, str]`，返回的响应头是 `dict[str, str]`、键一律小写（`send` 按小写查找）。拿不到 HTTP 响应时以异常抛出。
+- **transport**：可替换的发送函数（测试注入假的，生产用 urllib），签名 `(method, url, headers, body_bytes, timeout) -> (status, headers, body_bytes)`；`body_bytes` 在 `GET` 时为 `None`，在没有请求体的 `POST`、`PATCH` 时为 `b""`（发 `Content-Length: 0`，`Content-Type` 照上一条带 `application/json`；Core 对空请求体跳过请求体检查，§8.1 第 7 步）；请求头传 `dict[str, str]`，返回的响应头是 `dict[str, str]`、键一律小写（`send` 按小写查找）。拿不到 HTTP 响应时以异常抛出。
 - **生产 transport**：用 `urllib.request.build_opener(urllib.request.ProxyHandler({}), <不跟随重定向的处理器>)` 建一次 opener，`opener.open(request, timeout=timeout)`。
   - `ProxyHandler({})` **不用**环境变量里的 `HTTP_PROXY` 等代理（Core 只在内部网络，走代理只会把令牌交给代理）；
   - 不跟随重定向的处理器是 `HTTPRedirectHandler` 的子类、`redirect_request` 返回 `None`，3xx 因此以 `HTTPError` 出来；
@@ -349,7 +349,7 @@ run_once(session_factory, settings, *, owner, now_fn, jobs=None, stop_event=None
 ```
 
 - `run(session_factory, settings, now_fn, stop_event)`：同步函数；`interval_seconds` 是两次开始之间的最短间隔。长作业要在 `stop_event` 被设置时尽快返回。
-- 同名重复登记报 `ValueError`；`name` 必须是 1–64 个 `[a-z0-9_.]` 字符，`interval_seconds` 必须是 1–86400 的 `int`，否则 `ValueError`；`unregister_job` 只给测试用（不存在时什么都不做）。
+- 同名重复登记报 `ValueError`；`name` 必须是 1–64 个 `[a-z0-9_.]` 字符，`interval_seconds` 必须是 1–86400 的 `int`（`bool` 不算），否则 `ValueError`；`run_once` 的 `owner` 必须是 1–64 个可见 ASCII 字符（0x21–0x7E），否则 `ValueError`；`unregister_job` 只给测试用（不存在时什么都不做）。
 - `core_outbox.drain`（每 5 秒，调 4.3 的 `drain`，`max_commands = 50`、`max_seconds = 120`，把 `stop_event` 传下去）在 `app/scheduler.py` 模块底部登记，import 即登记。之后的工作包在各自模块里登记自己的作业（补拉、对账、清理过期登录尝试等），由 `app/scheduler.py` 统一 import。
 - `run_once` 跑一轮：`jobs` 为 `None` 时跑全部已登记的作业；为列表时只跑列表里的（空列表即什么都不跑）；列表里有没登记的名字报 `ValueError`。`stop_event` 被设置后，本轮余下的作业都不再抢租约、直接结束。**每处理一个作业都重新调一次 `now_fn()`** 作为这个作业的「现在」；取到的时间不是不带时区的整秒时，这个作业本轮跳过并记进程日志（与第 4 节的时间规则一致）。测试用它指定 `owner`（模拟两个调度器）、时间与只跑某个作业。线程每次醒来就调一次 `run_once`。
 
@@ -414,4 +414,4 @@ Core 生产实例就绪、签发了凭据之后（Core 契约 §10 第 2 条：�
   - 记结果时重新取时间；`now` 必须是不带时区的整秒；`error_code` 每次覆盖、超长截断。
   - 调度器：`run_once` 入口与每作业取时间；租约先提交再执行；停止事件与 8 秒等待；`drain` 的总时长上限；复用 `app.state.sessionmaker` 与 `utc_now`。
   - 三张表都用 `utf8mb4_0900_bin`（区分大小写、NO PAD）；JSON 空值存 SQL `NULL`。
-  - 第五轮预审与独立评审第 2 轮：`requeue` 不碰已 `resolve` 的命令并写明适用范围；处理函数失败的短事务改为核对租约的条件更新；`auth_error` 让本进程暂停认领 600 秒，首次发送就得到 401、403 或未配置的命令恢复可取消；顺序锁改用不弃用的写法、收窄「不会死锁」的说法；条件更新不用 ORM 会话同步；地址先查可见 ASCII；公开 `validate_request`，`send` 只读一次令牌；`encode_body` 只接受六种类型与字符串键；`User-Agent` 版本的格式；响应里类型不对的字段与重复、空的响应头；记结果时 `now_fn` 不合格的处理；默认值在模型上两种都写。独立评审第 3 轮：`last_claimed_at` 的语义改写为「为空 = 确定没生效过」，与恢复可取消一致；只有 401 让进程暂停，403 只退避这一条（新增 O8d）；入队先生成幂等键再校验；拒绝超出 64 位的整数；第 1、2 步共用一次 `now_fn()`。第六轮预审：地址不得含 `?`、`#`、`@`；`timeout` 的取值；配置问题的日志每 10 分钟最多一次；`Actor` 的定义；`encode_body` 按精确类型判断；处理函数接收 `now`；`process_one`、`drain` 取时间的次数；死锁落在处理函数中与提交时的区分；作业名与间隔的校验、`run_once` 对不合格时间的处理、线程捕获全部异常。第七轮预审：排序规则改为 NO PAD 的 `utf8mb4_0900_bin`；作业的 `next_run_at` 过远时收回；`timeout` 只在 `send` 校验、`bool` 不算；请求体嵌套上限 32 层；没有请求体时传给 transport 的值；401 暂停与记结果是否成功无关；`last_handler_error` 截断；`last_finished_at` 取时间失败时的处理；停止事件让本轮余下的作业不再执行。
+  - 第五轮预审与独立评审第 2 轮：`requeue` 不碰已 `resolve` 的命令并写明适用范围；处理函数失败的短事务改为核对租约的条件更新；`auth_error` 让本进程暂停认领 600 秒，首次发送就得到 401、403 或未配置的命令恢复可取消；顺序锁改用不弃用的写法、收窄「不会死锁」的说法；条件更新不用 ORM 会话同步；地址先查可见 ASCII；公开 `validate_request`，`send` 只读一次令牌；`encode_body` 只接受六种类型与字符串键；`User-Agent` 版本的格式；响应里类型不对的字段与重复、空的响应头；记结果时 `now_fn` 不合格的处理；默认值在模型上两种都写。独立评审第 3 轮：`last_claimed_at` 的语义改写为「为空 = 确定没生效过」，与恢复可取消一致；只有 401 让进程暂停，403 只退避这一条（新增 O8d）；入队先生成幂等键再校验；拒绝超出 64 位的整数；第 1、2 步共用一次 `now_fn()`。第六轮预审：地址不得含 `?`、`#`、`@`；`timeout` 的取值；配置问题的日志每 10 分钟最多一次；`Actor` 的定义；`encode_body` 按精确类型判断；处理函数接收 `now`；`process_one`、`drain` 取时间的次数；死锁落在处理函数中与提交时的区分；作业名与间隔的校验、`run_once` 对不合格时间的处理、线程捕获全部异常。第七轮预审：排序规则改为 NO PAD 的 `utf8mb4_0900_bin`；作业的 `next_run_at` 过远时收回；`timeout` 只在 `send` 校验、`bool` 不算；请求体嵌套上限 32 层；没有请求体时传给 transport 的值；401 暂停与记结果是否成功无关；`last_handler_error` 截断；`last_finished_at` 取时间失败时的处理；停止事件让本轮余下的作业不再执行。第八轮预审：`POST`、`PATCH` 一律带 `Content-Type: application/json`；配置问题日志限频的口径与测试重置；嵌套层数的数法；`interval_seconds` 不接受 `bool`；`owner` 的校验。
