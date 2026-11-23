@@ -80,7 +80,7 @@
 - **检查约束要对迁移建出的表测**：CI 的 `alembic check` 比对列、索引、唯一约束与外键，**不比对 CHECK 约束**。所以 001 的集成测试不用 `create_all`，而是用 `alembic.command.upgrade(Config("alembic.ini"), "head")` 在 CI 的一次性库上建表
   （测试里临时把环境变量 `INVENTORY_DATABASE_URL` 设成 `INVENTORY_TEST_DATABASE_URL` 的值，结束时恢复），跑完下面的例子后 `downgrade(…, "base")`，不影响 CI 之后的迁移步骤。没有测试库时跳过。
 - 002、004 的集成测试只测规则与接口，用 `Base.metadata.create_all` / `drop_all` 建删表即可，测试结束必须删表；没有测试库时跳过。
-- `app/db.py` 的 `make_engine` 改为 `create_engine(database_url, pool_pre_ping=True, hide_parameters=True)`：SQLAlchemy 的异常消息默认带着 SQL 的绑定参数（密码哈希、`token_hash`、`throttle_key` 等），开了它，异常与日志里就只有 SQL 文本、没有参数值。
+- `app/db.py` 的 `make_engine` 改为 `create_engine(database_url, pool_pre_ping=True, hide_parameters=True)`：SQLAlchemy 的异常消息默认带着 SQL 的绑定参数（密码哈希、`token_hash`、`throttle_key` 等），开了它，SQLAlchemy 拼进异常的绑定参数就不出现。数据库自己的错误文本仍可能含列值（例如重复键报错里的用户名），所以异常消息一律不输出、不写进响应：命令只输出异常类名（4.6），接口回答固定的 503（5.1）。
 - **上线前提**：生产 MySQL 至少 8.0.16（更早的版本只解析、不执行 CHECK 约束）。CI 用的 `mysql:8.0` 镜像是最新的 8.0 小版本。
 
 **约束的例子**（001 的集成测试对迁移建出的表逐条验证）：
@@ -287,7 +287,7 @@ TLS 在边缘反向代理终止，浏览器看到的是 HTTPS，所以 `Secure` 
 | A5 | 以 `Content-Type: text/plain` 提交一个合法 JSON 的请求体；以 `Sec-Fetch-Site: cross-site` 提交合法请求 | 分别 415 `unsupported_media_type`、403 `cross_site_request`；库里都没有多出登录尝试 |
 | A6 | 请求体 4097 字节；请求体是嵌套 2000 层的数组（`[` 与 `]` 各 2000 个，共 4000 字节，不超上限；`json.loads` 抛不抛 `RecursionError` 随 Python 版本而定，两种情况都必须回答 422）；请求体缺 `password` | 都是 422 `invalid_request`，响应体不含提交内容；库里没有多出登录尝试 |
 | A7 | 带着有效会话 cookie 再登录一次 | 200；旧会话被撤销，新会话有效 |
-| A8 | 进行中的登录已有 10 个时（测试里直接把计数设为 10）再登录 | 503 `login_busy`；库里没有多出登录尝试；计数复原后照常登录 |
+| A8 | 进行中的登录已有 10 个时（测试里直接把模块级计数设为 10，并在 `finally` 里复原，不影响其他测试）再登录 | 503 `login_busy`；库里没有多出登录尝试；计数复原后照常登录 |
 
 ## 6. 留给之后任务的事
 
@@ -316,7 +316,6 @@ TLS 在边缘反向代理终止，浏览器看到的是 HTTPS，所以 `Secure` 
 | `throttle_key`、`source_key` 改用带服务器密钥的 HMAC | 要多一个密钥配置与轮换办法；摘要只在库里 | 能读库的人可以穷举出来源地址（与库里其他运营数据同等保护） |
 | 登录时先不加锁校验密码、再加锁复核 | 多一套复核逻辑；同时最多两个 `authenticate`，排队的请求不持锁（5.1 第 6 步），持锁的只有正在算的那两个，每个约一次 scrypt 的时间 | 多来源同时攻击时，合法登录要和攻击请求一起排队或拿到 503 `login_busy`，重试即可 |
 | 框架默认的 500 响应也加 `no-store` | 500 的响应体只有固定文字，不含会话或个人数据 | 无 |
-
 | 人工解除锁定的命令 | 锁定 60 分钟自动解除；加命令要删或改登录尝试记录 | 被锁时只能等；代理没设置 `X-Real-IP` 时是全站级（见下） |
 
 接受的部署残余风险：共享代理网络里的其他容器能绕过代理、直接带任意 `X-Real-IP` 访问（5.3）；与攻击者共用出口地址的管理员会被按来源的上限一起锁住 60 分钟（4.2）；
@@ -331,4 +330,4 @@ TLS 在边缘反向代理终止，浏览器看到的是 HTTPS，所以 `Secure` 
   新增按来源的失败上限（`source_key` 列）与 IPv6 按 /64 计；检查约束改为对迁移建出的表测试、上线前提 MySQL ≥ 8.0.16；迁移文件名按 `alembic.ini` 模板带日期；
   密码哈希的测试移到 `tests/integration`（`tests/unit` 保持沙箱可跑）；`utc_now()` 定在服务模块；cookie 改用 `__Host-` 前缀；依赖用 `Annotated` 写法；第 7 节列出没有采用的加固与残余风险。
   再按预审：A6 的嵌套例子改到 4096 字节以内；`sessionmaker` 存在 `app.state`、由 `get_db` 依赖取用；账号变更的检查顺序与无法编码的密码；命令输出规范用户名。再按最终一轮预审：engine 开 `hide_parameters`（001 改 `app/db.py`）；命令的判定顺序与输出措辞；带旧 cookie 再登录时撤销的时机与出错处理。
-  再按独立评审第 2 轮：scrypt 的并发上限从 `pw_hash` 的信号量改为接口层的 `anyio.CapacityLimiter(2)` 加进行中 10 个的上限（等待不占线程、连接、行锁），新增 A8；写明代理不设置 `X-Real-IP` 时按来源上限会造成全站锁定；A6 不再断言一定抛 `RecursionError`；第 7 节补「人工解除锁定的命令」。
+  再按独立评审第 2 轮：scrypt 的并发上限从 `pw_hash` 的信号量改为接口层的 `anyio.CapacityLimiter(2)` 加进行中 10 个的上限（等待不占线程、连接、行锁），新增 A8；写明代理不设置 `X-Real-IP` 时按来源上限会造成全站锁定；A6 不再断言一定抛 `RecursionError`；第 7 节补「人工解除锁定的命令」。按第 3 轮建议改措辞（不改规则）：第 7 节表格断行、`hide_parameters` 的保证范围、A8 测试复原计数。
