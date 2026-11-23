@@ -203,10 +203,10 @@ tasks:
     depends_on:
       - INVENTORY-TASK-001
     acceptance_criteria:
-      - 两张表的列、类型、可空、默认值、唯一约束、检查约束与索引逐项符合 Core 客户端设计补充第 2 节，约束与索引名与设计一致；时间列是不带时区的 UTC
+      - 两张表的列、类型、可空、默认值、唯一约束、检查约束与索引逐项符合 Core 客户端设计补充第 2 节，约束与索引名与设计一致；两张表的排序规则是 utf8mb4_bin；时间列是不带时区的 UTC
       - 模型在 app/models/core_outbox.py 与 app/models/scheduled_job.py，app/models/__init__.py 导出 CoreOutboxCommand、ScheduledJob
       - 迁移 alembic/versions/20261123_0002_core_outbox_and_jobs.py 的 revision 为 0002、down_revision 为 0001；upgrade 建两张表并写出全部约束与索引名，downgrade 删两张表；CI 的 integration 检查里迁移往返与 alembic check 通过
-      - 集成测试 tests/integration/test_core_outbox_models.py 用 alembic 的 upgrade 按迁移建表，逐条验证设计第 2 节的例子 D1 至 D4，结束时 downgrade 到 base；没有测试库时跳过；测试由 PR 的必需 CI 检查 integration 执行并通过
+      - 集成测试 tests/integration/test_core_outbox_models.py 用 alembic 的 upgrade 按迁移建表，逐条验证设计第 2 节的例子 D1 至 D6，结束时 downgrade 到 base；没有测试库时跳过；测试由 PR 的必需 CI 检查 integration 执行并通过
       - 改动只落在 allowed_change_paths；不改 .platform/、CI、部署配置；不装依赖
       - allowed_commands 里的检查全部零退出，skipped 如实报告且不算 passed；以 Draft PR 交付，不合并、不直推
     allowed_change_paths:
@@ -264,10 +264,10 @@ tasks:
       - INVENTORY-TASK-005
       - INVENTORY-TASK-006
     acceptance_criteria:
-      - enqueue、process_one、drain、register_kind、cancel 在 app/services/core_outbox.py，签名与行为按设计 4.1 至 4.6；入队只加进调用方的事务、不提交；幂等键入队时生成且之后不改
-      - 可发条件按设计 4.2：同一顺序键下更小 id 的命令全部成功或取消才发；认领用设计 4.3 第 1 步的一条查询（被阻塞的命令不被选中）加 60 秒租约，记结果时租约对不上就放弃；取消只允许确定从未发出的命令
+      - enqueue、process_one、drain、register_kind、unregister_kind、resolve、cancel 在 app/services/core_outbox.py，签名与行为按设计 4.1 至 4.6；入队只加进调用方的事务、不提交；幂等键入队时生成且之后不改
+      - 可发条件按设计 4.2：同一顺序键下更小 id 的命令全部成功或取消才发；认领用设计 4.3 第 1 步的一条查询（被阻塞的命令不被选中）加 60 秒租约，记结果时租约对不上就放弃；未配置时不认领；取消只允许从未被认领的命令，resolve 让被拒或失败的命令不再挡路
       - 六类结果的处理、退避公式与 first_unknown_at 按设计 4.3 的表；处理函数与状态更新在同一事务，处理函数抛异常时整体回滚
-      - 集成测试 tests/integration/test_core_outbox_service.py 对真 MySQL、用假的发送函数与只在测试里登记的命令种类，覆盖例子 O1 至 O14，时间由参数传入且是整秒；用 Base.metadata 建表、测试结束删表；没有测试库时跳过；测试由 PR 的必需 CI 检查 integration 执行并通过
+      - 集成测试 tests/integration/test_core_outbox_service.py 对真 MySQL、用假的发送函数与只在测试里登记的命令种类，覆盖例子 O1 至 O14 与 O3b，时间由参数传入且是整秒；用 Base.metadata 建表、测试结束删表；没有测试库时跳过；测试由 PR 的必需 CI 检查 integration 执行并通过
       - 改动只落在 allowed_change_paths；不改 .platform/、CI、部署配置；不装依赖
       - allowed_commands 里的检查全部零退出，skipped 如实报告且不算 passed；以 Draft PR 交付，不合并、不直推
     allowed_change_paths:
