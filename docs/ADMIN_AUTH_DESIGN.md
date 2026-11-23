@@ -99,7 +99,7 @@
 ### 4.1 用户名与密码
 
 - **用户名**：合法用户名是**整串匹配**（`re.fullmatch`，不用 `re.match`，否则结尾的换行也能通过）`[a-z0-9][a-z0-9._-]{2,31}` 的串（3–32 个 ASCII 字符，小写字母、数字、`.`、`_`、`-`，首字符是字母或数字）。
-  命令行输入与登录时提交的用户名都先用 Python 的 `str.lower()` 转小写，得到「规范用户名」。建号时规范用户名不合法即拒绝。
+  命令行输入与登录时提交的用户名都先用 Python 的 `str.lower()` 转小写，得到「规范用户名」（`normalize_username(text) -> str`；合法与否用 `is_valid_username(name) -> bool`，两者都在 `app/domain/pw_hash.py`）。建号时规范用户名不合法即拒绝。
   **登录时规范用户名不合法就不查库**，直接按「用户名不存在」处理（4.3 第 3 步）。这样查库用的永远是纯 ASCII 小写串，MySQL 默认排序规则的大小写与重音不敏感（例如 `kélvin` 会匹配到 `kelvin`）用不上；
   能匹配到同一账号的输入，规范用户名必然相同，`throttle_key`（4.2）也就相同，换写法拿不到新的尝试次数。
 - **密码**：长度 12–128 个字符（Python `len`，按码点计），不做组成规则（不强制大小写、数字、符号）；转小写后不得等于规范用户名。不查常见弱口令表（见第 7 节）。
@@ -195,6 +195,7 @@
 - `enable_account(db, *, username) -> bool`（清空 `disabled_at`，不恢复已撤销的会话；`False` = 原本未停用，未改）
 - `account_exists(db, *, username) -> bool`（只读，供命令在提示输入密码之前检查）
 - 五个函数都先按 4.1 把 `username` 转成规范用户名，不合法即抛 `invalid_username`、不查库；查库只用规范用户名。
+- 检查顺序：用户名合法 → 账号存在与否（`already_exists` / `not_found`）→ 密码规则（`weak_password`，含无法按 UTF-8 编码的密码）。
 - 业务错误抛 `AccountError`，带 `code`：`invalid_username`、`already_exists`、`not_found`、`weak_password`（消息不含密码）。`create_account` 撞上唯一约束的 `IntegrityError` 时回滚并转成 `already_exists`。
 
 ### 4.6 服务器上的账号命令（INVENTORY-TASK-003）
@@ -213,7 +214,7 @@
 - 密码只经交互输入，不接受命令行参数或环境变量。
 - **退出码**：0 成功（含两种「已是……状态」）；1 业务错误或取消——`AccountError` 的四种、两次输入不一致、输入密码时遇到 EOF 或 Ctrl+C（输出「已取消」，什么都不写）；
   2 运行环境错误——没设 `INVENTORY_DATABASE_URL`、连不上数据库、表不存在或其他 `SQLAlchemyError`（输出「数据库错误」加异常类名，不输出连接串）。参数不对由 `argparse` 处理（它自己的退出码 2）。
-- 成功结果（含两种「已是……状态」）写到标准输出，错误与「已取消」写到标准错误；输出只有用户名与结果，不打印密码或哈希。
+- 成功结果（含两种「已是……状态」）写到标准输出，错误与「已取消」写到标准错误；输出只有规范用户名与结果，不打印密码或哈希。规范用户名用 `normalize_username`（4.1，在 `app/domain/pw_hash.py`）算，命令不另写规则。
 
 ## 5. 接口（INVENTORY-TASK-004）
 
@@ -240,7 +241,8 @@
 - `expires_at` 用 ISO 8601 UTC，形如 `2026-11-23T20:00:00Z`（库里本就是整秒，原样格式化，不再取整）。
 - 本节列出的全部响应（200、204、401、403、415、422、429、503）都带 `Cache-Control: no-store`。
 - 处理中数据库出错（`SQLAlchemyError`）→ 503 `{"detail": "database_unreachable"}`，与 `/readyz` 的原因一致，响应不含异常内容。
-- 每个请求用一个 SQLAlchemy `Session`（由 `create_app` 里已有的 engine 建 `sessionmaker`），请求结束关闭。
+- 每个请求用一个 SQLAlchemy `Session`：`create_app` 用已有的 engine 建 `sessionmaker`，存到 `app.state.sessionmaker`（未配置数据库时为 `None`）；`app/api/admin_session.py` 里的依赖 `get_db(request)` 从 `request.app.state.sessionmaker` 取，为空时回答第 1 步的 503，否则建一个 `Session`、请求结束关闭。之后的后台接口也用这个依赖。
+- `app/api/admin_session.py` 导出 `router`（`APIRouter`），`create_app` 用 `include_router` 挂上。
 - 依赖用 `Annotated[..., Depends(...)]` 写法（`pyproject.toml` 的 ruff 选了 B 规则，参数默认值写 `Depends(...)` 会触发 B008，而本任务改不了 `pyproject.toml`）。
 
 ### 5.2 会话 cookie
@@ -278,7 +280,7 @@ TLS 在边缘反向代理终止，浏览器看到的是 HTTPS，所以 `Secure` 
 | A3 | `X-Real-IP: 203.0.113.7` 失败 10 次后第 11 次 | 429 `login_locked`；换 `X-Real-IP: 203.0.113.8` 用正确密码登录 200 |
 | A4 | 登录后不带 `X-CSRF-Token` 调 `DELETE`；再带正确的调一次 | 第一次 403 `csrf_failed`、会话仍有效；第二次 204，之后 `GET` 为 401 |
 | A5 | 以 `Content-Type: text/plain` 提交一个合法 JSON 的请求体；以 `Sec-Fetch-Site: cross-site` 提交合法请求 | 分别 415 `unsupported_media_type`、403 `cross_site_request`；库里都没有多出登录尝试 |
-| A6 | 请求体 4097 字节；请求体是嵌套 10 万层的数组；请求体缺 `password` | 都是 422 `invalid_request`，响应体不含提交内容；库里没有多出登录尝试 |
+| A6 | 请求体 4097 字节；请求体是嵌套 2000 层的数组（`[` 与 `]` 各 2000 个，共 4000 字节，不超上限，`json.loads` 抛 `RecursionError`）；请求体缺 `password` | 都是 422 `invalid_request`，响应体不含提交内容；库里没有多出登录尝试 |
 | A7 | 带着有效会话 cookie 再登录一次 | 200；旧会话被撤销，新会话有效 |
 
 ## 6. 留给之后任务的事
@@ -319,3 +321,4 @@ TLS 在边缘反向代理终止，浏览器看到的是 HTTPS，所以 `Secure` 
   再按独立评审第 1 轮：账号命令拆成单独任务（003），接口改为 004；登录接口放进线程池、只收 `application/json`、拒绝跨站、限制请求体大小、`RecursionError` 回答 422、带旧会话再登录时撤销旧会话；
   scrypt 同时最多两个；新增按来源的失败上限（`source_key` 列）与 IPv6 按 /64 计；检查约束改为对迁移建出的表测试、上线前提 MySQL ≥ 8.0.16；迁移文件名按 `alembic.ini` 模板带日期；
   密码哈希的测试移到 `tests/integration`（`tests/unit` 保持沙箱可跑）；`utc_now()` 定在服务模块；cookie 改用 `__Host-` 前缀；依赖用 `Annotated` 写法；第 7 节列出没有采用的加固与残余风险。
+  再按预审：A6 的嵌套例子改到 4096 字节以内；`sessionmaker` 存在 `app.state`、由 `get_db` 依赖取用；账号变更的检查顺序与无法编码的密码；命令输出规范用户名。
