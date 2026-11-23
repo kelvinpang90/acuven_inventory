@@ -114,7 +114,7 @@
 | `core_ops_token_file` | `INVENTORY_CORE_OPS_TOKEN_FILE` | 运维凭据（Inventory 每日对账那一个，Core 契约 §10 第 2 条）令牌文件；空 = 未配置 |
 
 - **地址合格**：先要求整串只含可见 ASCII（0x21–0x7E，不含空格、制表符、回车换行——`urlsplit` 会悄悄去掉这些字符，之后 `http.client` 却会报错），并且不含 `?`、`#`、`@`（`urlsplit` 对结尾的 `?`、`#` 解析出空的查询串与片段，单看解析结果会放行），再用 `urllib.parse.urlsplit` 解析，scheme 是 `http` 或 `https`，有主机名，端口能解析（访问 `.port` 不抛 `ValueError`），没有用户信息、查询串与片段，路径为空。不合格按「未配置」处理。
-- **令牌每次请求时读文件**，去掉首尾空白，不缓存：Core 轮换令牌时有最长 7 天的重叠期（§10 第 4 条），换文件即可生效，不用重启。
+- **令牌每次请求时读文件**（按 UTF-8 解码；解码失败 `UnicodeDecodeError` 算「内容不合格」，读文件的 `OSError` 算「不存在或读不了」），去掉首尾空白，不缓存：Core 轮换令牌时有最长 7 天的重叠期（§10 第 4 条），换文件即可生效，不用重启。
 - **令牌合格**：去掉首尾空白后是 1–512 个 `[A-Za-z0-9._~+/=-]` 字符（RFC 6750 的 b64token；Core 的令牌是 `csk_` 加 43 个 base64url 字符）。文件不存在、读不了、为空或内容不合格，都按「未配置」处理；进程日志（WARNING）只记是哪一个文件（业务或运维）或地址出了什么问题，**不记内容**；同一个问题每 10 分钟最多记一次，免得每个调度周期都刷一条：「同一个问题」= （业务或运维，问题种类）这一对，问题种类是地址为空、地址不合格、令牌文件路径为空、文件不存在或读不了、内容为空、内容不合格之一；计时用 `time.monotonic()`；模块级字典记下每一对上次记录的时间，另有只给测试用的 `reset_config_warnings()` 清空它。这样含换行或非 ASCII 字符的令牌不会进到 HTTP 库里、再随异常消息带出来。
 - 令牌只出现在 `Authorization` 头里；不进日志、异常消息、`repr`、数据库。
 - 仓库里不写真实地址：示例值放 `.env.example`（本任务不改它，由第 6 节的上线步骤补）。
@@ -260,7 +260,7 @@ check_configured(settings, credential="business") -> bool
 | `rejected` | +1 | `rejected` | `response_body`、`finished_at`；调 `on_rejected` |
 | `caller_error` | +1 | `failed` | `finished_at`；**不调**处理函数（不是业务结果） |
 
-   - **401 的进程暂停**在 `send` 返回 `auth_error` 且 `http_status = 401` 时就设上，**不论**后面记结果成功、因租约对不上放弃还是事务失败——它保护的是进程不再乱发，与这条命令记没记成无关。
+   - **401 的进程暂停**在 `send` 返回 `auth_error` 且 `http_status = 401` 时就设上（`_auth_paused_until = 第 1 步取的 now + 600 秒`，不依赖第 4 步的时间），**不论**后面记结果成功、因租约对不上放弃还是事务失败——它保护的是进程不再乱发，与这条命令记没记成无关。
    - **恢复可取消**：分类是 `not_configured` 或 `auth_error`，并且「这次认领前 `last_claimed_at` 为空」时，把 `last_claimed_at` 改回空。这是安全的：`not_configured` 没有发出；401、403 在 Core 取锁之前被拒、不保存，确定没生效；租约核对已排除别的发送者。之前被认领过的（`last_claimed_at` 本来就有值）不改，因为更早那次可能已发出。
    - 除 `not_configured` 那一行外，每种情况都写 `last_outcome`、`http_status`、`core_request_id`、`error_code`（本次响应的错误码，没有错误码——成功、超时等——时写 `NULL`，所以成功后不会留下旧的 `REQUEST_IN_PROGRESS`），清掉 `lease_until`。`error_code` 超过 64 个字符、`core_request_id` 超过 128 个字符时截断后存。
    - 处理函数与状态更新在**同一个事务**里提交。处理函数抛异常，或要调处理函数时（`succeeded`、`rejected`）这条命令的 `kind` 已不在登记表里：回滚这个事务，再**另开一个短事务**，用条件更新 `… WHERE id = :id AND status = 'queued' AND lease_until = :认领时的租约值`：`handler_failures + 1`、`last_handler_error = 异常类名`（种类未登记时写 `UnregisteredKind`）、`next_attempt_at = now + 退避(handler_failures)`、清租约，其他不改（`last_handler_error` 超过 255 个字符时截断）；影响 0 行（租约已到期被别人接手）就什么都不改，只记日志；记进程日志（命令 id、`kind`、异常类名）；`process_one` 不抛出，返回这条命令的 id。到时间后会同键重发，Core 重放同一结果，处理函数再执行一次，所以**处理函数必须能在「首次执行失败回滚」后安全地再执行**。`handler_failures > 0` 且仍 `queued` 的命令由 W8 告警（它们的 `attempts`、`first_unknown_at` 不会变，靠这一列才看得见）。
@@ -351,7 +351,7 @@ run_once(session_factory, settings, *, owner, now_fn, jobs=None, stop_event=None
 - `run(session_factory, settings, now_fn, stop_event)`：同步函数；`interval_seconds` 是两次开始之间的最短间隔。长作业要在 `stop_event` 被设置时尽快返回。
 - 同名重复登记报 `ValueError`；`name` 必须是 1–64 个 `[a-z0-9_.]` 字符，`interval_seconds` 必须是 1–86400 的 `int`（`bool` 不算），否则 `ValueError`；`run_once` 的 `owner` 必须是 1–64 个可见 ASCII 字符（0x21–0x7E），否则 `ValueError`；`unregister_job` 只给测试用（不存在时什么都不做）。
 - `core_outbox.drain`（每 5 秒，调 4.3 的 `drain`，`max_commands = 50`、`max_seconds = 120`，把 `stop_event` 传下去）在 `app/scheduler.py` 模块底部登记，import 即登记。之后的工作包在各自模块里登记自己的作业（补拉、对账、清理过期登录尝试等），由 `app/scheduler.py` 统一 import。
-- `run_once` 跑一轮：`jobs` 为 `None` 时跑全部已登记的作业；为列表时只跑列表里的（空列表即什么都不跑）；列表里有没登记的名字报 `ValueError`。`stop_event` 被设置后，本轮余下的作业都不再抢租约、直接结束。**每处理一个作业都重新调一次 `now_fn()`** 作为这个作业的「现在」；取到的时间不是不带时区的整秒时，这个作业本轮跳过并记进程日志（与第 4 节的时间规则一致）。测试用它指定 `owner`（模拟两个调度器）、时间与只跑某个作业。线程每次醒来就调一次 `run_once`。
+- `run_once` 跑一轮：`jobs` 为 `None` 时跑全部已登记的作业；为列表时只跑列表里的（空列表即什么都不跑）；列表里有没登记的名字报 `ValueError`。`stop_event` 被设置后，本轮余下的作业都不再抢租约、直接结束。**每个作业调两次 `now_fn()`**：开始时一次，作为这个作业的「现在」（抢租约、算下次时间）；结束时一次，只用于 `last_finished_at`（5.2 第 3 步）；取到的时间不是不带时区的整秒时，这个作业本轮跳过并记进程日志（与第 4 节的时间规则一致）。测试用它指定 `owner`（模拟两个调度器）、时间与只跑某个作业。线程每次醒来就调一次 `run_once`。
 
 ### 5.2 运行
 
@@ -414,4 +414,4 @@ Core 生产实例就绪、签发了凭据之后（Core 契约 §10 第 2 条：�
   - 记结果时重新取时间；`now` 必须是不带时区的整秒；`error_code` 每次覆盖、超长截断。
   - 调度器：`run_once` 入口与每作业取时间；租约先提交再执行；停止事件与 8 秒等待；`drain` 的总时长上限；复用 `app.state.sessionmaker` 与 `utc_now`。
   - 三张表都用 `utf8mb4_0900_bin`（区分大小写、NO PAD）；JSON 空值存 SQL `NULL`。
-  - 第五轮预审与独立评审第 2 轮：`requeue` 不碰已 `resolve` 的命令并写明适用范围；处理函数失败的短事务改为核对租约的条件更新；`auth_error` 让本进程暂停认领 600 秒，首次发送就得到 401、403 或未配置的命令恢复可取消；顺序锁改用不弃用的写法、收窄「不会死锁」的说法；条件更新不用 ORM 会话同步；地址先查可见 ASCII；公开 `validate_request`，`send` 只读一次令牌；`encode_body` 只接受六种类型与字符串键；`User-Agent` 版本的格式；响应里类型不对的字段与重复、空的响应头；记结果时 `now_fn` 不合格的处理；默认值在模型上两种都写。独立评审第 3 轮：`last_claimed_at` 的语义改写为「为空 = 确定没生效过」，与恢复可取消一致；只有 401 让进程暂停，403 只退避这一条（新增 O8d）；入队先生成幂等键再校验；拒绝超出 64 位的整数；第 1、2 步共用一次 `now_fn()`。第六轮预审：地址不得含 `?`、`#`、`@`；`timeout` 的取值；配置问题的日志每 10 分钟最多一次；`Actor` 的定义；`encode_body` 按精确类型判断；处理函数接收 `now`；`process_one`、`drain` 取时间的次数；死锁落在处理函数中与提交时的区分；作业名与间隔的校验、`run_once` 对不合格时间的处理、线程捕获全部异常。第七轮预审：排序规则改为 NO PAD 的 `utf8mb4_0900_bin`；作业的 `next_run_at` 过远时收回；`timeout` 只在 `send` 校验、`bool` 不算；请求体嵌套上限 32 层；没有请求体时传给 transport 的值；401 暂停与记结果是否成功无关；`last_handler_error` 截断；`last_finished_at` 取时间失败时的处理；停止事件让本轮余下的作业不再执行。第八轮预审：`POST`、`PATCH` 一律带 `Content-Type: application/json`；配置问题日志限频的口径与测试重置；嵌套层数的数法；`interval_seconds` 不接受 `bool`；`owner` 的校验。
+  - 第五轮预审与独立评审第 2 轮：`requeue` 不碰已 `resolve` 的命令并写明适用范围；处理函数失败的短事务改为核对租约的条件更新；`auth_error` 让本进程暂停认领 600 秒，首次发送就得到 401、403 或未配置的命令恢复可取消；顺序锁改用不弃用的写法、收窄「不会死锁」的说法；条件更新不用 ORM 会话同步；地址先查可见 ASCII；公开 `validate_request`，`send` 只读一次令牌；`encode_body` 只接受六种类型与字符串键；`User-Agent` 版本的格式；响应里类型不对的字段与重复、空的响应头；记结果时 `now_fn` 不合格的处理；默认值在模型上两种都写。独立评审第 3 轮：`last_claimed_at` 的语义改写为「为空 = 确定没生效过」，与恢复可取消一致；只有 401 让进程暂停，403 只退避这一条（新增 O8d）；入队先生成幂等键再校验；拒绝超出 64 位的整数；第 1、2 步共用一次 `now_fn()`。第六轮预审：地址不得含 `?`、`#`、`@`；`timeout` 的取值；配置问题的日志每 10 分钟最多一次；`Actor` 的定义；`encode_body` 按精确类型判断；处理函数接收 `now`；`process_one`、`drain` 取时间的次数；死锁落在处理函数中与提交时的区分；作业名与间隔的校验、`run_once` 对不合格时间的处理、线程捕获全部异常。第七轮预审：排序规则改为 NO PAD 的 `utf8mb4_0900_bin`；作业的 `next_run_at` 过远时收回；`timeout` 只在 `send` 校验、`bool` 不算；请求体嵌套上限 32 层；没有请求体时传给 transport 的值；401 暂停与记结果是否成功无关；`last_handler_error` 截断；`last_finished_at` 取时间失败时的处理；停止事件让本轮余下的作业不再执行。第八轮预审：`POST`、`PATCH` 一律带 `Content-Type: application/json`；配置问题日志限频的口径与测试重置；嵌套层数的数法；`interval_seconds` 不接受 `bool`；`owner` 的校验。最终一轮预审后只改措辞、不改规则：令牌文件的解码失败算内容不合格；401 暂停用第 1 步的时间起算；调度器每个作业取两次时间。
