@@ -1,6 +1,6 @@
 # TODO — 开发任务清单
 
-> 最后更新：2026-11-21（从模板起步；工作包与先后见 [V1_MINIMAL_DESIGN.md](V1_MINIMAL_DESIGN.md) 第 15 节）
+> 最后更新：2026-11-23（登记 INVENTORY-TASK-001～003，后台登录三层，设计见 [ADMIN_AUTH_DESIGN.md](ADMIN_AUTH_DESIGN.md)；工作包与先后见 [V1_MINIMAL_DESIGN.md](V1_MINIMAL_DESIGN.md) 第 15 节）
 
 ---
 
@@ -26,13 +26,15 @@
 
 <!-- openclaw:planning-v1:begin -->
 ### 当前计划
+1. `INVENTORY-TASK-001` 管理员账号、后台会话与登录尝试记录的数据模型
 
 ### 已阻塞
 - 待登记：目录、期初与上线切换的真实数据导入｜阻塞：Stock Core 契约修订、生产实例与恢复演练尚未完成
 - 待登记：首个获批平台的真实适配器｜阻塞：Shopee 与 TikTok Shop 的应用尚未获批
 
 ### 后续计划
-- 待登记：后台管理员账号、密码登录与会话
+- `INVENTORY-TASK-002` 管理员密码、账号命令、后台会话与登录锁定规则
+- `INVENTORY-TASK-003` 管理员登录、退出与会话接口
 - 待登记：两个平台授权回调的 state 校验与换令牌
 - 待登记：Stock Core 客户端与命令发件箱
 - 待登记：平台连接、令牌加密存储、刷新与撤权处理
