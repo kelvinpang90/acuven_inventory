@@ -24,7 +24,7 @@
 1. **先落库，再发出。**每个 Core 写命令先在 Inventory 库里写一行发件箱记录（和触发它的业务变化同一个事务），带一个**入队时就定死**的幂等键与请求体，然后才由后台发出。进程崩溃、Core 不可用都不会丢命令，也不会换键重发。
 2. **可能已经发出的命令，只能同键重发。**超时、连接中断、500 与其他 5xx 的结果都是「未知」（§8.3）。Core 把幂等记录与命令写入放在同一个事务提交（§7.1），所以同键重发要么原样重放已生效的结果，要么第一次执行，不会生效两次。**绝不把未知当成功或失败**，也不在 Inventory 一侧补造数量（V1 设计 3.5）。可能发出过的命令也不能取消（4.6）。
 3. **业务拒绝是确定结果。**取锁之后的 4xx（缺货、SKU 停用等）已被 Core 保存，同键只会重放（§7.1）；交给登记该命令种类的业务处理函数决定下一步。要再试只能由业务层**入队一条新命令**，带新幂等键（§7.1 最后一条）。
-4. **配置与凭据问题不消耗命令；Inventory 自己的 bug 要停下来。**401、403 发生在 Core 取锁之前、不保存（§7.1、§8.1 检查顺序第 4、5 步），同键重发永远安全：命令保持排队，发件箱整体暂停一段时间再试，由 W8 告警（唯一的例外是 SKU 合并执行时锁内复核池的 403，它会被保存，§2.8；V1 不做 SKU 合并，V1 设计 3.3）。其他调用方错误（400、405、413、幂等或业务引用冲突等）说明 Inventory 有 bug：命令停在 `failed`，同一订单后面的命令也不再发出，等人处理；修好之后由运维把它**同键**放回队列（4.7）。
+4. **配置与凭据问题不消耗命令；Inventory 自己的 bug 要停下来。**401、403 发生在 Core 取锁之前、不保存（§7.1、§8.1 检查顺序第 4、5 步），同键重发永远安全：命令保持排队、长退避再试（401 时整个进程暂停认领一段时间），由 W8 告警（唯一的例外是 SKU 合并执行时锁内复核池的 403，它会被保存，§2.8；V1 不做 SKU 合并，V1 设计 3.3）。其他调用方错误（400、405、413、幂等或业务引用冲突等）说明 Inventory 有 bug：命令停在 `failed`，同一订单后面的命令也不再发出，等人处理；修好之后由运维把它**同键**放回队列（4.7）。
 5. **同一顺序键内，按入队的先后发出。**同一个「顺序键」（订单引用）下，先入队的没有成功，后入队的就不发。本层只保证「入队顺序」，**不保证业务上的先后**：确认销售要带预留 ID，只能在预留成功后由处理函数入队，在那之前同一订单入队的其他命令会排在它前面。业务层（W4）必须按订单状态决定什么时候入队下一步，不能指望发件箱替它排业务顺序（4.2）。
 
 ## 2. 数据模型（INVENTORY-TASK-005）
@@ -51,7 +51,7 @@
 | `handler_failures` | Integer | 非空，默认 0（写法同 `attempts`）；处理函数失败的次数（4.3）；检查 `ck_core_outbox_commands_handler_failures_nonnegative`：`handler_failures >= 0` |
 | `next_attempt_at` | DateTime | 非空；`queued` 时最早什么时候再发 |
 | `lease_until` | DateTime | 可空；有发送者正在处理时非空 |
-| `last_claimed_at` | DateTime | 可空；**第一次**被认领的时间，设了就不再改、不再清。非空 = 可能已经发出过（4.6 取消的依据） |
+| `last_claimed_at` | DateTime | 可空；4.6 取消的依据。**为空 = 确定没有在 Core 生效过**（从未被认领，或每次认领都以未配置、401、403 结束）；**非空 = 可能已经发出过**。认领时为空就设为认领时间；之后只在 4.3 第 4 步的「恢复可取消」时改回空，别的情况都不改 |
 | `resolved_at` | DateTime | 可空；业务层确认已处理完这条被拒或失败的命令、不再挡住同一顺序键的时间（4.2）；检查 `ck_core_outbox_commands_resolved_only_final`：`resolved_at IS NULL OR status IN ('rejected', 'failed')` |
 | `last_outcome` | String(16) | 可空；最近一次发送的分类（3.3 除 `not_configured` 外的六类之一） |
 | `first_unknown_at` | DateTime | 可空；第一次得到「未知」的时间，之后不清（供 W8 判断积压与告警） |
@@ -113,9 +113,9 @@
 | `core_token_file` | `INVENTORY_CORE_TOKEN_FILE` | 业务凭据令牌所在文件的路径（Docker secrets 文件）；空 = 未配置 |
 | `core_ops_token_file` | `INVENTORY_CORE_OPS_TOKEN_FILE` | 运维凭据（Inventory 每日对账那一个，Core 契约 §10 第 2 条）令牌文件；空 = 未配置 |
 
-- **地址合格**：先要求整串只含可见 ASCII（0x21–0x7E，不含空格、制表符、回车换行——`urlsplit` 会悄悄去掉这些字符，之后 `http.client` 却会报错），再用 `urllib.parse.urlsplit` 解析，scheme 是 `http` 或 `https`，有主机名，端口能解析（访问 `.port` 不抛 `ValueError`），没有用户信息、查询串与片段，路径为空。不合格按「未配置」处理。
+- **地址合格**：先要求整串只含可见 ASCII（0x21–0x7E，不含空格、制表符、回车换行——`urlsplit` 会悄悄去掉这些字符，之后 `http.client` 却会报错），并且不含 `?`、`#`、`@`（`urlsplit` 对结尾的 `?`、`#` 解析出空的查询串与片段，单看解析结果会放行），再用 `urllib.parse.urlsplit` 解析，scheme 是 `http` 或 `https`，有主机名，端口能解析（访问 `.port` 不抛 `ValueError`），没有用户信息、查询串与片段，路径为空。不合格按「未配置」处理。
 - **令牌每次请求时读文件**，去掉首尾空白，不缓存：Core 轮换令牌时有最长 7 天的重叠期（§10 第 4 条），换文件即可生效，不用重启。
-- **令牌合格**：去掉首尾空白后是 1–512 个 `[A-Za-z0-9._~+/=-]` 字符（RFC 6750 的 b64token；Core 的令牌是 `csk_` 加 43 个 base64url 字符）。文件不存在、读不了、为空或内容不合格，都按「未配置」处理；进程日志只记是哪一个文件（业务或运维）出了什么问题，**不记内容**。这样含换行或非 ASCII 字符的令牌不会进到 HTTP 库里、再随异常消息带出来。
+- **令牌合格**：去掉首尾空白后是 1–512 个 `[A-Za-z0-9._~+/=-]` 字符（RFC 6750 的 b64token；Core 的令牌是 `csk_` 加 43 个 base64url 字符）。文件不存在、读不了、为空或内容不合格，都按「未配置」处理；进程日志（WARNING）只记是哪一个文件（业务或运维）或地址出了什么问题，**不记内容**；同一个问题每 10 分钟最多记一次（模块级记下上次记录的时间），免得每个调度周期都刷一条。这样含换行或非 ASCII 字符的令牌不会进到 HTTP 库里、再随异常消息带出来。
 - 令牌只出现在 `Authorization` 头里；不进日志、异常消息、`repr`、数据库。
 - 仓库里不写真实地址：示例值放 `.env.example`（本任务不改它，由第 6 节的上线步骤补）。
 
@@ -136,10 +136,11 @@ check_configured(settings, credential="business") -> bool
   - `method` 只能是 `GET`、`POST`、`PATCH`；`GET` 不能带幂等键或请求体，`POST`、`PATCH` 必须带幂等键；
   - `path` 整串匹配 `/v1/[A-Za-z0-9._~:/?&=%,+-]{0,250}`（只有 ASCII，不含空格与控制字符；调用方负责对路径参数与查询值做百分号编码）；
   - `Idempotency-Key` 1–128 个 0x21–0x7E 字符；`request_id` 1–128 个 `[A-Za-z0-9._:-]` 字符；
-  - `actor` 为 `Actor(ref, role)` 时，`ref` 1–128 个 `[A-Za-z0-9._:-]` 字符，`role` 只能是 `stock_operator`、`stock_admin`、`catalog_admin`（§10 第 3 条）。
-- **`encode_body(body)`**：`body` 必须是 `dict`（JSON 对象），整棵树里只允许 `dict`（键必须是 `str`）、`list`、`str`、`int`、`bool`、`None`（`tuple`、`float`、非字符串的键等一律拒绝）；`json.dumps(body, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode("utf-8")`。下面任一情况报 `ValueError`：
+  - `timeout` 是大于 0、不超过 60 的 `int` 或 `float`（`None`、0、负数会让 urllib 一直等或立刻失败）；
+  - `actor` 为 `Actor(ref, role)`（`app/core_client/http.py` 里的不可变数据类，两个字段都是 `str`）时，`ref` 1–128 个 `[A-Za-z0-9._:-]` 字符，`role` 只能是 `stock_operator`、`stock_admin`、`catalog_admin`（§10 第 3 条）。
+- **`encode_body(body)`**：`body` 必须是 `dict`（JSON 对象），整棵树里每个值的类型**恰好**是 `dict`（键必须恰好是 `str`）、`list`、`str`、`int`、`bool`、`None` 之一，按 `type(x) is …` 判断，子类（`IntEnum`、`StrEnum`、`OrderedDict` 等）、`tuple`、`float` 一律拒绝；`json.dumps(body, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode("utf-8")`。下面任一情况报 `ValueError`：
   - 不是 `dict`；
-  - 含 `float`（Core 拒绝带小数点或指数的数，§7.1；件数与 ID 都是整数或字符串）；
+  - 含 `float`（Core 拒绝带小数点或指数的数，§7.1；件数与 ID 都是整数或字符串）；含超出 −2^63 到 2^63−1 的整数（MySQL 的 JSON 列会把它存成浮点数，读回来就变了）；
   - 含 `NaN`、`Infinity`；
   - 有不能编码的对象（把 `TypeError` 转成 `ValueError`）；
   - 任何列表超过 100 个元素（Core 的批量上限，§8.1 第 7 步）；
@@ -178,7 +179,7 @@ check_configured(settings, credential="business") -> bool
 | `not_configured` | 没发出：`check_configured` 为假 | 不算一次尝试 |
 | `unknown` | 超时、连接被拒或中断、TLS 错误；状态码小于 200 或大于 599；500、502、504 与其他 5xx（503 另见下）；503 但错误码不是 `UNAVAILABLE`；2xx 但正文不是合法 JSON、不是对象，或 `data` 不是 JSON 对象（缺失、`null`、数组都算） | **结果未知**：同键重发 |
 | `retry` | 503 且 `code` 为 `UNAVAILABLE`（确定未生效）；409 `REQUEST_IN_PROGRESS`；429 `RATE_LIMITED` | 同键重发，`Retry-After` 有就照它 |
-| `auth_error` | 401；403 | 凭据或权限问题，Core 取锁之前就拒了、不保存：同键长退避重发，告警 |
+| `auth_error` | 401；403 | 凭据或权限问题，Core 取锁之前就拒了、不保存：同键长退避重发，告警（401 还让本进程暂停认领，4.3） |
 | `succeeded` | 2xx 且正文的 `data` 是 JSON 对象 | 完成 |
 | `caller_error` | 400；405；413；3xx；409 的 `IDEMPOTENCY_CONFLICT`、`BUSINESS_REF_CONFLICT`、`ORDER_REFERENCE_CONFLICT`；422 `INVALID_REQUEST`；404 `NOT_FOUND`（路由不存在）；4xx 但正文不是合法 JSON 或没有字符串 `error.code`（例如框架默认的 404 正文——Core 的错误总带错误体，没有就说明请求没到 Core 的业务代码） | Inventory 的 bug：停下，等人 |
 | `rejected` | 其余 4xx（含 404 的各种 `*_NOT_FOUND`、409 的业务码、422 的其他码，以及**认不出的错误码**——§8.4 要求当不可重试处理） | 确定的业务拒绝：交业务处理函数 |
@@ -212,7 +213,7 @@ check_configured(settings, credential="business") -> bool
 
 `enqueue(db, *, kind, method, path, body, ordering_key=None, actor=None, now) -> CoreOutboxCommand`：
 
-- **校验**（不合格报 `ValueError`，什么都不写）：`kind` 符合 `[a-z][a-z0-9_.]{0,39}` 且已登记了处理函数（4.5）；`method` 是 `POST` 或 `PATCH`；`path`、`actor`、`body` 用 3.2 的公开函数 `validate_request` 校验（`body` 可以为 `None`）；`ordering_key` 为 `None` 或 1–128 个 `[A-Za-z0-9._:-]` 字符（与 Core 引用同一字符集）。3.2 发出前的校验因此在入队时全做一遍，能入队的命令发送时不会因校验失败。
+- **校验**（不合格报 `ValueError`，什么都不写）：先生成幂等键（见下），再连同它一起调用 `validate_request`（写请求必须带幂等键，不另开一条不查幂等键的路）；`kind` 符合 `[a-z][a-z0-9_.]{0,39}` 且已登记了处理函数（4.5）；`method` 是 `POST` 或 `PATCH`；`path`、`actor`、`body` 用 3.2 的公开函数 `validate_request` 校验（`body` 可以为 `None`）；`ordering_key` 为 `None` 或 1–128 个 `[A-Za-z0-9._:-]` 字符（与 Core 引用同一字符集）。3.2 发出前的校验因此在入队时全做一遍，能入队的命令发送时不会因校验失败。
 - **同一顺序键串行**：`ordering_key` 不为空时，先执行 `INSERT INTO core_outbox_ordering_locks (ordering_key) VALUES (:k) ON DUPLICATE KEY UPDATE ordering_key = ordering_key`（不用 MySQL 8.0.20 起弃用的 `VALUES()` 写法）。这一句对该行加**排他锁**（第一次插入时新行带排他锁；重复键时 `ON DUPLICATE KEY UPDATE` 也加排他锁，不会出现共享锁再升级），一直持有到调用方的事务结束。持锁者提交的情况下不会死锁；持锁者**回滚**且同时有两个以上等待者时，InnoDB 可能判其中一个死锁，按 4.4 整笔重试。同一顺序键的两个入队事务因此串行：后一个要等前一个提交或回滚之后才能插入命令行，所以它拿到的 `id` 一定更大、且前一个已经提交——**同一顺序键内 `id` 的先后就是提交的先后**，认领时不会因为看不到未提交的更小 `id` 而越过它。
 - **不提交**：只把行加进调用方的事务（`db.add` 加 `flush` 拿到 `id`），由调用方和它的业务变化一起提交——这就是「先落库」。
 - `idempotency_key = "inv:" + kind + ":" + secrets.token_hex(16)`，入队时生成、存进行里、之后永不改；最长 4 + 40 + 1 + 32 = 77 个字符。
@@ -241,8 +242,8 @@ check_configured(settings, credential="business") -> bool
 
 `process_one(session_factory, settings, *, now_fn, transport=None) -> int | None`（返回处理过的命令 id，没有可发的返回 `None`）：
 
-1. **先看配置与暂停**：`check_configured(settings, "business")` 为假，或本进程的**凭据暂停**还没到期（见下面 `auth_error` 一行），就**什么都不认领**，直接返回 `None`（`drain` 随之停止）。未配置或暂停期间没有任何命令被认领，也就没有命令的 `last_claimed_at` 因此被设上。凭据暂停是模块级变量 `_auth_paused_until`（每个进程各自一份，不进数据库），另有只给测试用的 `reset_auth_pause()`。
-2. **认领**（短事务，`now = now_fn()`）：一条查询同时满足 4.2 的三个条件，被阻塞的命令根本不会被选中，不会占住名额：
+1. **先看配置与暂停**（`now = now_fn()`，这一次取的时间也用于第 2 步）：`check_configured(settings, "business")` 为假，或本进程的**凭据暂停**还没到期（`_auth_paused_until > now`）（见下面 `auth_error` 一行），就**什么都不认领**，直接返回 `None`（`drain` 随之停止）。未配置或暂停期间没有任何命令被认领，也就没有命令的 `last_claimed_at` 因此被设上。凭据暂停是模块级变量 `_auth_paused_until`（每个进程各自一份，不进数据库），另有只给测试用的 `reset_auth_pause()`。
+2. **认领**（短事务，用第 1 步的 `now`）：一条查询同时满足 4.2 的三个条件，被阻塞的命令根本不会被选中，不会占住名额：
    `SELECT c.* FROM core_outbox_commands c WHERE c.status = 'queued' AND c.next_attempt_at <= :now AND (c.lease_until IS NULL OR c.lease_until <= :now) AND NOT EXISTS (SELECT 1 FROM core_outbox_commands p WHERE p.ordering_key = c.ordering_key AND p.id < c.id AND NOT (p.status IN ('succeeded', 'cancelled') OR (p.status IN ('rejected', 'failed') AND p.resolved_at IS NOT NULL))) ORDER BY c.next_attempt_at, c.id LIMIT 1 FOR UPDATE OF c SKIP LOCKED`
    （`ordering_key` 为空时 `p.ordering_key = c.ordering_key` 不成立，子查询为空，自然可发）。选中就设 `lease_until = now + 60 秒`，`last_claimed_at` 为空时设为 `now`（同时在内存里记下「这次认领前它为空」），提交；没有就返回 `None`。
 3. **发出**（事务外，不持有数据库连接）：调 3.2 的 `send`，用这条命令存着的 `method`、`path`、`body`、`idempotency_key`、`actor`，`request_id = "inv_cmd_<id>_<attempts+1>"`。
@@ -253,7 +254,7 @@ check_configured(settings, credential="business") -> bool
 | `not_configured`（第 1 步之后、发出之前令牌文件恰好被换掉） | 不变 | `queued` | `next_attempt_at = now + 60 秒`；`last_outcome`、`http_status`、`core_request_id`、`error_code` 都不改；清租约 |
 | `retry` | +1 | `queued` | `next_attempt_at = now + max(退避, retry_after)` |
 | `unknown` | +1 | `queued` | 同上；`first_unknown_at` 为空时设为 `now` |
-| `auth_error` | +1 | `queued` | `next_attempt_at = now + 600 秒`；不调处理函数；**本进程暂停认领 600 秒**（`_auth_paused_until = now + 600 秒`），`drain` 随之停止，凭据出错时不会在几分钟内把整个积压各发一遍、刷满 Core 的安全日志 |
+| `auth_error` | +1 | `queued` | `next_attempt_at = now + 600 秒`；不调处理函数。**401**（令牌本身不行，影响所有请求）时还让**本进程暂停认领 600 秒**（`_auth_paused_until = now + 600 秒`），`drain` 随之停止，凭据出错时不会在几分钟内把整个积压各发一遍、刷满 Core 的安全日志。**403** 往往只针对某个接口或某条命令（缺 scope、角色、池授权），只在这条命令上退避，不暂停别的命令；W8 按 `last_outcome = auth_error` 与 `http_status` 分别告警 |
 | `succeeded` | +1 | `succeeded` | `response_body`、`finished_at`；调处理函数的 `on_succeeded` |
 | `rejected` | +1 | `rejected` | `response_body`、`finished_at`；调 `on_rejected` |
 | `caller_error` | +1 | `failed` | `finished_at`；**不调**处理函数（不是业务结果） |
@@ -268,24 +269,28 @@ check_configured(settings, credential="business") -> bool
 5. **退避**：`退避(n) = min(5 × 2^(n−1), 600)` 秒（`n` 是加一之后的 `attempts` 或 `handler_failures`）：5、10、20、40……封顶 10 分钟。没有随机抖动（单进程、单发送者，不需要；也让测试确定）。
 6. 一直重试，不设上限：可能已发出的命令永远不能自己放弃（原则 2）。积压多久要告警由 W8 根据 `first_unknown_at`、`attempts`、`handler_failures`、`last_outcome = auth_error` 以及「仍 `queued` 且 `created_at` 早于某个时间」判断。
 
-`drain(session_factory, settings, *, now_fn, max_commands=50, max_seconds=120, stop_event=None, transport=None) -> int`：循环 `process_one`（把 `now_fn`、`transport` 原样传下去），直到它返回 `None`、处理满 `max_commands` 条、从开始算起超过 `max_seconds` 秒（按 `now_fn()` 算，在每条之间检查），或 `stop_event` 被设置；返回处理的条数。供调度器调用（第 5 节）。
+**取时间的次数**：`process_one` 每次调用恰好在第 1 步取一次 `now_fn()`（用于暂停判断与认领），没有认领到命令时就只这一次；认领到时在第 4 步再取一次（用于记结果、退避、处理函数与短事务）。
+
+`drain(session_factory, settings, *, now_fn, max_commands=50, max_seconds=120, stop_event=None, transport=None) -> int`：开始时取一次 `now_fn()` 作为起点，之后每次调用 `process_one` 之前再取一次判断是否超过 `max_seconds`。循环 `process_one`（把 `now_fn`、`transport` 原样传下去），直到它返回 `None`、处理满 `max_commands` 条、从开始算起超过 `max_seconds` 秒（按 `now_fn()` 算，在每条之间检查），或 `stop_event` 被设置；返回处理的条数。供调度器调用（第 5 节）。
 
 ### 4.4 租约与并发
 
 - 部署换容器时新旧进程可能短暂同时运行；认领用 `FOR UPDATE … SKIP LOCKED` 加租约，同一条命令同时只有一个发送者。
 - 租约 60 秒，比一次请求的超时（15 秒）长得多。发送者在发出后崩溃：租约到期后别的发送者同键重发，Core 重放或执行一次（原则 2）。
 - 记结果时租约值对不上（已被别人接手）就放弃：Core 那边同键，最终只有一个结果生效。
-- **加锁顺序**：业务事务先锁自己的业务行（如订单行），再碰发件箱（`enqueue` 的顺序锁、`cancel`、`resolve`）；处理函数在记结果的事务里会先持有命令行的锁、再锁业务行——两者方向相反，InnoDB 可能判死锁、牺牲其中一个。牺牲记结果一方时，算作处理函数失败（4.3 第 4 步：`handler_failures` 加一、退避后同键重发，W8 看得见）；牺牲业务一方时，调用 `enqueue`、`cancel`、`resolve` 的业务代码要对死锁（MySQL 错误 1213）整笔重试。处理函数里调用的 `enqueue` 碰上顺序锁的死锁（4.1）也走前一种。处理函数里**不对别的命令行加锁**，也不调 `cancel`、`resolve`。
+- **加锁顺序**：业务事务先锁自己的业务行（如订单行），再碰发件箱（`enqueue` 的顺序锁、`cancel`、`resolve`）；处理函数在记结果的事务里会先持有命令行的锁、再锁业务行——两者方向相反，InnoDB 可能判死锁、牺牲其中一个。牺牲记结果一方时：死锁在处理函数执行**当中**抛出（处理函数里的查询或 `enqueue`），算作处理函数失败（4.3 第 4 步：`handler_failures` 加一、退避后同键重发，W8 看得见）；在处理函数返回之后、提交时抛出，算作「记结果的事务失败」（不加计数，租约到期后同键重发）；牺牲业务一方时，调用 `enqueue`、`cancel`、`resolve` 的业务代码要对死锁（MySQL 错误 1213）整笔重试。处理函数里调用的 `enqueue` 碰上顺序锁的死锁（4.1）也走前一种。处理函数里**不对别的命令行加锁**，也不调 `cancel`、`resolve`。
 
 ### 4.5 命令种类与处理函数
 
 ```
 register_kind(kind, *, on_succeeded, on_rejected)
 unregister_kind(kind)
+on_succeeded(db, command, now)
+on_rejected(db, command, now)
 ```
 
 - 在模块级登记表里登记；同名重复登记报 `ValueError`。业务模块（W3、W4）在 import 时登记自己的种类。`unregister_kind` 只给测试用（不存在时什么都不做）：测试在 `setUp`/`tearDown` 里登记、移除自己的种类。
-- `on_succeeded(db, command)`、`on_rejected(db, command)`：在 4.3 第 4 步的事务里调用，可以改 Inventory 的业务表，也可以 `enqueue` 后续命令（例如预留成功后入队确认销售），**不提交**（由发件箱提交）、**不调 Core**。`command.response_body` 里是 Core 的响应体。
+- `on_succeeded(db, command, now)`、`on_rejected(db, command, now)`：`now` 是 4.3 第 4 步记结果时取的时间，处理函数里入队后续命令、写业务表都用它。在 4.3 第 4 步的事务里调用，可以改 Inventory 的业务表，也可以 `enqueue` 后续命令（例如预留成功后入队确认销售），**不提交**（由发件箱提交）、**不调 Core**。`command.response_body` 里是 Core 的响应体。
 - 处理函数要容忍响应体里没有 `/v1` 后来新增的字段：Core 重放旧幂等记录时不会补上它们（§7.1）。
 - 本层的测试用假的种类（例如 `test.echo`）验证调用时机与事务边界，不登记任何真实种类。
 - **给 W3、W4 的接口提示**：V1 设计 7.3 要求一个 SKU 盘点前它的命令发件箱已清空。发件箱本身不按 SKU 索引（一条命令可以涉及多个 SKU，请求体是 JSON），W3、W4 要在自己的业务表里记下「哪条命令涉及哪些 SKU」（例如订单行到命令的对照），按那张表判断，不去扫请求体。
@@ -294,7 +299,7 @@ unregister_kind(kind)
 
 `cancel(db, *, command_id, now) -> bool`：用**条件更新**——`UPDATE core_outbox_commands SET status = 'cancelled', finished_at = :now WHERE id = :id AND status = 'queued' AND last_claimed_at IS NULL`——按影响行数返回 `True`/`False`。**不提交**（与业务层的其他变化一起提交）。
 
-- 只有**从未被认领过**的命令可取消。命令一旦被认领就可能已经发出（发出后进程崩溃、记结果的事务回滚、得到未知），这时它可能已在 Core 生效，必须先同键重发拿到确定结果。`last_claimed_at` 在认领事务里设上、之后不清，所以不论后来发生什么都认得出「可能发出过」；未配置时根本不认领（4.3 第 1 步），所以积压在未配置期间的命令仍可取消。
+- 只有**从未被认领过**的命令可取消。命令一旦被认领就可能已经发出（发出后进程崩溃、记结果的事务回滚、得到未知），这时它可能已在 Core 生效，必须先同键重发拿到确定结果。`last_claimed_at` 在认领事务里设上，只有确定没生效时（未配置、401、403，且这次认领前它就为空）才改回空（4.3 第 4 步），其余情况都保留，所以不论后来发生什么都认得出「可能发出过」；未配置时根本不认领（4.3 第 1 步），所以积压在未配置期间的命令仍可取消。
 - 用条件更新、不先读再写：业务事务早先可能已把这条命令读进 SQLAlchemy 的会话，读到的旧值（`last_claimed_at` 仍为空）不能作为判断依据。条件更新以数据库里的当前行为准；行正被认领事务锁着时，更新会等它提交，再按提交后的值判断。
 
 ### 4.7 运维恢复
@@ -316,6 +321,7 @@ unregister_kind(kind)
 | O7 | 得到 C3 | 记结果 | `rejected`，`on_rejected` 被调用，`error_code = INSUFFICIENT_STOCK` |
 | O8 | 得到 C7 | 记结果 | `failed`，两个处理函数都没被调用；同订单后面的命令被阻塞；`requeue` 之后同键再发 |
 | O8b | 一条从未被认领过的命令得到 C7b（401） | 记结果 | 仍 `queued`，`last_outcome = auth_error`，`next_attempt_at = now + 600 秒`，`last_claimed_at` 改回空（之后可以 `cancel`）；本进程 600 秒内 `process_one` 都返回 `None`；同订单后面的命令照样被它挡着（它没完成） |
+| O8d | 订单 A 的一条命令得到 403 | 记结果后再 `process_one` | 这条命令 `next_attempt_at = now + 600 秒`、`last_claimed_at` 改回空；没有进程暂停，订单 B 的命令照常发出 |
 | O8c | O8 的命令已被业务层 `resolve` | `requeue` | 返回 `False`、不改；未 `resolve` 的 `failed` 命令返回 `True`，`resolved_at` 仍为空 |
 | O9 | 未配置令牌文件，有一条 `queued` 命令 | `process_one` | 返回 `None`，没发请求；命令的 `attempts`、`next_attempt_at`、`last_claimed_at` 都不变（可以取消） |
 | O10 | `on_succeeded` 抛 `RuntimeError` | 记结果 | 事务回滚：命令仍 `queued`、业务表没变；另记 `handler_failures = 1`、`last_handler_error = RuntimeError`、`next_attempt_at = now + 5 秒`；`process_one` 返回 id、不抛出 |
@@ -341,13 +347,13 @@ run_once(session_factory, settings, *, owner, now_fn, jobs=None, stop_event=None
 ```
 
 - `run(session_factory, settings, now_fn, stop_event)`：同步函数；`interval_seconds` 是两次开始之间的最短间隔。长作业要在 `stop_event` 被设置时尽快返回。
-- 同名重复登记报 `ValueError`；`unregister_job` 只给测试用（不存在时什么都不做）。
+- 同名重复登记报 `ValueError`；`name` 必须是 1–64 个 `[a-z0-9_.]` 字符，`interval_seconds` 必须是 1–86400 的 `int`，否则 `ValueError`；`unregister_job` 只给测试用（不存在时什么都不做）。
 - `core_outbox.drain`（每 5 秒，调 4.3 的 `drain`，`max_commands = 50`、`max_seconds = 120`，把 `stop_event` 传下去）在 `app/scheduler.py` 模块底部登记，import 即登记。之后的工作包在各自模块里登记自己的作业（补拉、对账、清理过期登录尝试等），由 `app/scheduler.py` 统一 import。
-- `run_once` 跑一轮：`jobs` 为 `None` 时跑全部已登记的作业；为列表时只跑列表里的（空列表即什么都不跑）；列表里有没登记的名字报 `ValueError`。**每处理一个作业都重新调一次 `now_fn()`** 作为这个作业的「现在」。测试用它指定 `owner`（模拟两个调度器）、时间与只跑某个作业。线程每次醒来就调一次 `run_once`。
+- `run_once` 跑一轮：`jobs` 为 `None` 时跑全部已登记的作业；为列表时只跑列表里的（空列表即什么都不跑）；列表里有没登记的名字报 `ValueError`。**每处理一个作业都重新调一次 `now_fn()`** 作为这个作业的「现在」；取到的时间不是不带时区的整秒时，这个作业本轮跳过并记进程日志（与第 4 节的时间规则一致）。测试用它指定 `owner`（模拟两个调度器）、时间与只跑某个作业。线程每次醒来就调一次 `run_once`。
 
 ### 5.2 运行
 
-- 一个后台线程（`threading.Thread`，`daemon=True`），每 2 秒醒一次，调 `run_once`。对每个作业：
+- 一个后台线程（`threading.Thread`，`daemon=True`），每 2 秒醒一次，调 `run_once`；线程循环捕获 `run_once` 抛出的**任何** `Exception`（记进程日志，只有异常类名），继续下一轮，线程不会因此退出。对每个作业：
   1. 确保 `scheduled_jobs` 里有它的行（没有就插入，`next_run_at = now`；撞主键就忽略）；
   2. **抢租约**（单独的短事务，**提交后**才执行作业，这样持有者崩溃时别人看得到租约、到期可以接手）：`UPDATE scheduled_jobs SET lease_owner = :me, lease_until = :now + 300 秒, last_started_at = :now WHERE name = :name AND next_run_at <= :now AND (lease_until IS NULL OR lease_until <= :now)`，影响行数为 1 才算抢到；
   3. 抢到就执行 `run`；结束后（不论成败）`UPDATE … SET next_run_at = :now + interval, lease_owner = NULL, lease_until = NULL, last_finished_at = :now_fn(), last_status, last_error WHERE name = :name AND lease_owner = :me`（`:now` 是第 2 步用的值）。成功时 `last_status = ok`、`last_error = NULL`；
@@ -390,7 +396,7 @@ Core 生产实例就绪、签发了凭据之后（Core 契约 §10 第 2 条：�
 | 重试上限 | 不设 | 可能已发出的命令放弃就可能少报或错报；靠 W8 告警 |
 | HTTP 库 | 标准库 `urllib` | 不加依赖（Worker 不能装依赖，沙箱也要能跑单元测试）；同步阻塞在后台线程里，不影响请求处理 |
 | 换 Core 凭据（不是轮换令牌） | **V1 不换凭据，只轮换令牌**（`credential_id` 不变，幂等作用域不变，§10 第 4 条） | 换凭据会改变幂等作用域，可能已发出的命令换凭据重发可能生效两次。要换时，先要一个「只发已认领过的命令」的开关，把它们补交完——这个开关与步骤留给 W8 |
-| 401、403 不消耗命令 | 同键、600 秒后重发，期间本进程暂停认领，W8 告警 | Core 取锁之前就拒了、不保存（§7.1），同键重发安全；暂停让凭据出错时每 10 分钟只有一条请求；代价是凭据出错期间所有命令都卡在队里，等人修好。暂停只在进程内存里，换容器后新进程会先试一次 |
+| 401、403 不消耗命令 | 同键、600 秒后重发；401 时本进程暂停认领，403 只退避这一条；W8 告警 | Core 取锁之前就拒了、不保存（§7.1），同键重发安全；401 的暂停让凭据出错时每 10 分钟只有一条请求，代价是凭据出错期间所有命令都卡在队里，等人修好；暂停只在进程内存里，换容器后新进程会先试一次。403 永远失败的命令一直挡着同订单后面的命令，但可以取消（恢复可取消），由人处理 |
 | 单进程发送 | 是 | V1 只有一个 API 容器；租约与 `SKIP LOCKED` 保证换容器时不会重复发送 |
 | 调度器租约 300 秒 | 是 | `drain` 有 `max_seconds = 120` 上限，正常远小于 300 秒；万一超过，两个 `drain` 重叠也是安全的：每条命令由发件箱自己的租约与 `SKIP LOCKED` 保证只被一个发送者处理（4.4）。之后登记的作业必须同样能容忍重叠执行，做不到的自己加锁或分批 |
 | 业务先后 | 本层只保证同一顺序键内的入队顺序 | 见原则 5 与 4.2；W4 按订单状态决定何时入队下一步 |
@@ -400,10 +406,10 @@ Core 生产实例就绪、签发了凭据之后（Core 契约 §10 第 2 条：�
 - **0.1**（2026-11-23）：草案。同日经四轮设计预审与一轮独立评审修订，主要改动：
   - 发件箱的顺序：认领用一条查询排除被阻塞的命令（原写法会被阻塞命令占满而卡住）；同一顺序键的入队用顺序锁表串行，保证 `id` 先后就是提交先后；原则 5 收窄为「入队顺序」，业务先后交给 W4。
   - 阻塞与恢复：被拒或失败的命令可由业务层 `resolve`；`failed` 可由运维同键 `requeue`；401、403 不消耗命令，长退避重发。
-  - 取消：只允许从未被认领的命令（只写一次的 `last_claimed_at`），未配置时不认领；`cancel`、`resolve` 用条件更新，不依赖会话里的旧值。
+  - 取消：只允许确定没生效过的命令（`last_claimed_at` 为空），未配置时不认领；`cancel`、`resolve` 用条件更新，不依赖会话里的旧值。
   - 处理函数失败另记 `handler_failures` 并退避，W8 看得见。
   - 客户端：502 按 Core 契约归「未知」；地址用 `urlsplit` 校验；令牌格式先校验再用；请求体拒绝浮点数、超长数组与超过 128 KiB；路径字符白名单；不用环境代理、不跟随重定向；不 `import ssl`；超时可覆盖；`request_id`、`replayed` 的取法；正文含 `NaN` 按非法 JSON。
   - 记结果时重新取时间；`now` 必须是不带时区的整秒；`error_code` 每次覆盖、超长截断。
   - 调度器：`run_once` 入口与每作业取时间；租约先提交再执行；停止事件与 8 秒等待；`drain` 的总时长上限；复用 `app.state.sessionmaker` 与 `utc_now`。
   - 三张表都用 `utf8mb4_bin`；JSON 空值存 SQL `NULL`。
-  - 第五轮预审与独立评审第 2 轮：`requeue` 不碰已 `resolve` 的命令并写明适用范围；处理函数失败的短事务改为核对租约的条件更新；`auth_error` 让本进程暂停认领 600 秒，首次发送就得到 401、403 或未配置的命令恢复可取消；顺序锁改用不弃用的写法、收窄「不会死锁」的说法；条件更新不用 ORM 会话同步；地址先查可见 ASCII；公开 `validate_request`，`send` 只读一次令牌；`encode_body` 只接受六种类型与字符串键；`User-Agent` 版本的格式；响应里类型不对的字段与重复、空的响应头；记结果时 `now_fn` 不合格的处理；默认值在模型上两种都写。
+  - 第五轮预审与独立评审第 2 轮：`requeue` 不碰已 `resolve` 的命令并写明适用范围；处理函数失败的短事务改为核对租约的条件更新；`auth_error` 让本进程暂停认领 600 秒，首次发送就得到 401、403 或未配置的命令恢复可取消；顺序锁改用不弃用的写法、收窄「不会死锁」的说法；条件更新不用 ORM 会话同步；地址先查可见 ASCII；公开 `validate_request`，`send` 只读一次令牌；`encode_body` 只接受六种类型与字符串键；`User-Agent` 版本的格式；响应里类型不对的字段与重复、空的响应头；记结果时 `now_fn` 不合格的处理；默认值在模型上两种都写。独立评审第 3 轮：`last_claimed_at` 的语义改写为「为空 = 确定没生效过」，与恢复可取消一致；只有 401 让进程暂停，403 只退避这一条（新增 O8d）；入队先生成幂等键再校验；拒绝超出 64 位的整数；第 1、2 步共用一次 `now_fn()`。第六轮预审：地址不得含 `?`、`#`、`@`；`timeout` 的取值；配置问题的日志每 10 分钟最多一次；`Actor` 的定义；`encode_body` 按精确类型判断；处理函数接收 `now`；`process_one`、`drain` 取时间的次数；死锁落在处理函数中与提交时的区分；作业名与间隔的校验、`run_once` 对不合格时间的处理、线程捕获全部异常。

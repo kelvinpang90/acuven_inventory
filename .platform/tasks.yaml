@@ -270,9 +270,9 @@ tasks:
       - enqueue、process_one、drain、register_kind、unregister_kind、resolve、cancel、requeue 在 app/services/core_outbox.py，签名与行为按设计 4.1 至 4.7；公开函数校验时间是不带时区的整秒
       - 入队按设计 4.1 用 validate_request 先做全部校验，有顺序键时先取顺序锁，只加进调用方的事务、不提交；幂等键入队时生成且之后不改
       - 未配置时不认领；认领用设计 4.3 第 2 步的一条查询（被阻塞的命令不被选中）加 60 秒租约并只写一次 last_claimed_at；记结果时重新取时间、按 populate_existing 读行，租约对不上就放弃
-      - 七类结果的处理、退避、auth_error 时本进程暂停认领、恢复可取消、error_code 覆盖与截断、处理函数失败按租约另记 handler_failures、send 异常的处理按设计 4.3；处理函数与状态更新在同一事务
+      - 七类结果的处理、退避、auth_error 为 401 时本进程暂停认领、恢复可取消、error_code 覆盖与截断、处理函数失败按租约另记 handler_failures、send 异常的处理按设计 4.3；处理函数与状态更新在同一事务
       - resolve、cancel、requeue 用设计 4.2、4.6、4.7 的条件更新（不用 ORM 会话同步），按影响行数返回，不提交；requeue 不碰已 resolve 的命令
-      - 集成测试 tests/integration/test_core_outbox_service.py 对真 MySQL、用假的发送函数与只在测试里登记的命令种类，覆盖例子 O1 至 O16 与 O3b、O8b、O8c、O10b、O12b，时间由参数传入且是整秒；用 Base.metadata 建表、测试结束删表；没有测试库时跳过；测试由 PR 的必需 CI 检查 integration 执行并通过
+      - 集成测试 tests/integration/test_core_outbox_service.py 对真 MySQL、用假的发送函数与只在测试里登记的命令种类，覆盖例子 O1 至 O16 与 O3b、O8b、O8c、O8d、O10b、O12b，时间由参数传入且是整秒；用 Base.metadata 建表、测试结束删表；没有测试库时跳过；测试由 PR 的必需 CI 检查 integration 执行并通过
       - 改动只落在 allowed_change_paths；不改 .platform/、CI、部署配置；不装依赖
       - allowed_commands 里的检查全部零退出，skipped 如实报告且不算 passed；以 Draft PR 交付，不合并、不直推
     allowed_change_paths:
