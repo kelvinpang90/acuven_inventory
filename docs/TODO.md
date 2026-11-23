@@ -1,6 +1,6 @@
 # TODO — 开发任务清单
 
-> 最后更新：2026-11-21（从模板起步；工作包与先后见 [V1_MINIMAL_DESIGN.md](V1_MINIMAL_DESIGN.md) 第 15 节）
+> 最后更新：2026-11-23（登记 INVENTORY-TASK-001～004，后台登录四层，设计见 [ADMIN_AUTH_DESIGN.md](ADMIN_AUTH_DESIGN.md)；工作包与先后见 [V1_MINIMAL_DESIGN.md](V1_MINIMAL_DESIGN.md) 第 15 节）
 
 ---
 
@@ -26,13 +26,16 @@
 
 <!-- openclaw:planning-v1:begin -->
 ### 当前计划
+1. `INVENTORY-TASK-001` 管理员账号、后台会话与登录尝试记录的数据模型
+2. `INVENTORY-TASK-002` 管理员密码哈希、登录锁定、后台会话与账号变更规则
+3. `INVENTORY-TASK-003` 服务器上建号、改密、停用与恢复管理员账号的命令
+4. `INVENTORY-TASK-004` 管理员登录、退出与会话接口
 
 ### 已阻塞
 - 待登记：目录、期初与上线切换的真实数据导入｜阻塞：Stock Core 契约修订、生产实例与恢复演练尚未完成
 - 待登记：首个获批平台的真实适配器｜阻塞：Shopee 与 TikTok Shop 的应用尚未获批
 
 ### 后续计划
-- 待登记：后台管理员账号、密码登录与会话
 - 待登记：两个平台授权回调的 state 校验与换令牌
 - 待登记：Stock Core 客户端与命令发件箱
 - 待登记：平台连接、令牌加密存储、刷新与撤权处理
@@ -41,6 +44,7 @@
 - 待登记：平台适配器协议与模拟适配器
 - 待登记：每日对账、Telegram 告警与待处理页面
 - 待登记：后台前端骨架与 CI 前端检查
+- 待登记：登录尝试的查看与 90 天过期清理
 <!-- openclaw:planning-v1:end -->
 
 ---

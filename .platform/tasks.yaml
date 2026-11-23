@@ -67,4 +67,126 @@ default: deny
 #       steps:
 #         - <lowercase_step_name>
 #       timeout_seconds: 300
-tasks: []
+tasks:
+  # 后台管理员登录分四层（数据 / 规则与服务 / 账号命令 / 接口），依据 docs/ADMIN_AUTH_DESIGN.md（V1 设计补充，碰个人数据，设计闸门）。
+  # 本层只建三张表与约束，以及本仓库的第一条迁移。
+  - id: INVENTORY-TASK-001
+    title: 管理员账号、后台会话与登录尝试记录的数据模型
+    purpose: >-
+      后台登录的数据层（后台登录设计补充第 3 节）：建 admin_accounts、admin_sessions、admin_login_attempts 三张表及其约束与索引，
+      写本仓库的第一条迁移，让迁移环境看得到这些模型，并让数据库异常不带绑定参数。只建表与约束：不写密码哈希、锁定规则、会话签发、账号命令或接口，
+      不改 app/main.py、前端、.platform/、CI、部署配置或设计文档，不装依赖。后面依次是 INVENTORY-TASK-002（规则与服务）、003（账号命令）、004（接口）。
+    status: ready
+    depends_on: []
+    acceptance_criteria:
+      - 三张表的列、类型、可空、唯一约束、检查约束、外键与索引逐项符合后台登录设计补充第 3 节，约束与索引名与设计一致；时间列是不带时区的 UTC；不存姓名、电话、邮箱、来源地址原文、提交的用户名原文、密码原文或会话令牌原文
+      - 模型在 app/models/admin_auth.py，app/models/__init__.py 导出 AdminAccount、AdminSession、AdminLoginAttempt；alembic/env.py 导入 app.models，使 Base.metadata 含这三张表；app/db.py 的 make_engine 开 hide_parameters，异常里不带绑定参数
+      - 迁移 alembic/versions/20261123_0001_admin_auth.py 的 revision 为 0001、down_revision 为空；upgrade 建三张表并写出全部约束与索引名，downgrade 按依赖反序删表；CI 的 integration 检查里迁移往返与 alembic check 通过
+      - 集成测试 tests/integration/test_admin_auth_models.py 用 alembic 的 upgrade 在测试库上按迁移建表，逐条验证设计第 3 节的例子 D1 至 D7（检查约束必须对迁移建出的表验证），结束时 downgrade 到 base；没有测试库时跳过；测试由 PR 的必需 CI 检查 integration 执行并通过
+      - 改动只落在 allowed_change_paths；不改 .platform/、CI、部署配置；不装依赖
+      - allowed_commands 里的检查全部零退出，skipped 如实报告且不算 passed；以 Draft PR 交付，不合并、不直推
+    allowed_change_paths:
+      - app/db.py
+      - app/models/__init__.py
+      - app/models/admin_auth.py
+      - alembic/env.py
+      - alembic/versions/20261123_0001_admin_auth.py
+      - tests/integration/test_admin_auth_models.py
+    allowed_commands:
+      - lint.check
+      - format.check
+    creates_branch: true
+    creates_pull_request: true
+
+  # 后台登录的规则与服务层：密码规则与哈希、两道登录失败上限、一次登录的步骤、会话与 CSRF 令牌、账号变更的服务函数。不加命令与接口。
+  # 密码哈希用标准库 scrypt，要加载 _hashlib，Worker 沙箱关闭 Win32k 时加载不了：它的测试放 tests/integration（pytest，不需要数据库），
+  # tests/unit 只放 login_throttle 的纯函数测试（只用 hashlib.sha256 与 ipaddress，unittest 写法），所以 tests.unit 在沙箱里仍可跑。
+# 接入时要在 Worker 沙箱里实测 hashlib 导入失败 _hashlib 后能回退到内置 sha256；不行就把 tests.unit 从本任务的 allowed_commands 去掉。
+  - id: INVENTORY-TASK-002
+    title: 管理员密码哈希、登录锁定、后台会话与账号变更规则
+    purpose: >-
+      后台登录的规则与服务层（后台登录设计补充第 4.1 至 4.5 节）：用户名与密码规则、scrypt 哈希与假哈希、规范来源与两道失败上限、
+      在一个事务里完成的登录步骤、服务端会话与由会话令牌导出的 CSRF 令牌、建号改密停用恢复的服务函数。
+      不写账号命令与接口，不改 app/main.py、数据模型与迁移、前端、.platform/、CI、部署配置或设计文档，不装依赖。账号命令是 INVENTORY-TASK-003，接口是 004。
+    status: ready
+    depends_on:
+      - INVENTORY-TASK-001
+    acceptance_criteria:
+      - 用户名与密码规则、哈希格式与校验、假哈希按设计 4.1 实现，在 app/domain/pw_hash.py；测试 tests/integration/test_pw_hash.py 覆盖例子 P1 至 P4
+      - 规范来源（IPv6 取 64 位前缀网段）、throttle_key、source_key 与窗口判定按设计 4.2 在 app/domain/login_throttle.py，只用标准库；单元测试 tests/unit/test_login_throttle.py 用 unittest 写法，覆盖窗口边界与规范来源
+      - 登录按设计 4.3：两道上限任一满了即锁定且不查账号、不校验密码；规范用户名不合法不查库；每次调用恰好写一条尝试记录，五种结果各有测试；会话、撤销、CSRF 与账号行加锁按设计 4.4；utc_now 与全部服务函数在 app/services/admin_auth.py
+      - 账号变更的服务函数按设计 4.5，错误码与设计一致；重设密码与停用撤销该账号全部未撤销会话
+      - 集成测试 tests/integration/test_admin_auth_service.py 对真 MySQL 覆盖例子 L1 至 L8 与 S1 至 S4，时间由参数传入且是整秒；用 Base.metadata 建表、测试结束删表；没有测试库时跳过
+      - 密码、会话令牌、CSRF 令牌与密码哈希不出现在日志与异常消息里
+      - 单元测试由 PR 的必需 CI 检查 unit 执行、集成测试由 integration 执行，均通过；改动只落在 allowed_change_paths；不改 .platform/、CI、部署配置；不装依赖
+      - allowed_commands 里的检查全部零退出，skipped 如实报告且不算 passed；以 Draft PR 交付，不合并、不直推
+    allowed_change_paths:
+      - app/domain/pw_hash.py
+      - app/domain/login_throttle.py
+      - app/services/__init__.py
+      - app/services/admin_auth.py
+      - tests/integration/test_pw_hash.py
+      - tests/unit/test_login_throttle.py
+      - tests/integration/test_admin_auth_service.py
+    allowed_commands:
+      - lint.check
+      - format.check
+      - tests.unit
+    creates_branch: true
+    creates_pull_request: true
+
+  # 后台登录的账号命令：运营者在服务器上的 API 容器里建号、改密、停用、恢复。只调用 002 的服务函数，不另写规则。
+  - id: INVENTORY-TASK-003
+    title: 服务器上建号、改密、停用与恢复管理员账号的命令
+    purpose: >-
+      后台登录的账号命令（后台登录设计补充第 4.6 节）：create-account、reset-password、disable-account、enable-account 四个子命令，
+      密码只经不回显的交互输入。只调用 INVENTORY-TASK-002 的服务函数与 utc_now，不另写规则或查询；不加接口，不改服务与数据模型、
+      .platform/、CI、部署配置或设计文档，不装依赖。
+    status: ready
+    depends_on:
+      - INVENTORY-TASK-002
+    acceptance_criteria:
+      - 命令在 app/admin.py，入口 main 接受参数列表、返回退出码，四个子命令的行为按设计 4.6；用户名的合法与存在在提示输入密码之前检查
+      - 密码只经 getpass 不回显地输入两次，不接受命令行参数或环境变量；两次不一致、EOF、Ctrl+C 都不写库
+      - 退出码与输出去向按设计 4.6；输出不含密码、哈希或连接串
+      - 集成测试 tests/integration/test_admin_cli.py 替换 getpass 提供输入，对真 MySQL 覆盖每个子命令的成功与至少一种失败，以及没设连接串时退出码为 2；用 Base.metadata 建表、测试结束删表；没有测试库时跳过需要数据库的用例；测试由 PR 的必需 CI 检查 integration 执行并通过
+      - 改动只落在 allowed_change_paths；不改 .platform/、CI、部署配置；不装依赖
+      - allowed_commands 里的检查全部零退出，skipped 如实报告且不算 passed；以 Draft PR 交付，不合并、不直推
+    allowed_change_paths:
+      - app/admin.py
+      - tests/integration/test_admin_cli.py
+    allowed_commands:
+      - lint.check
+      - format.check
+    creates_branch: true
+    creates_pull_request: true
+
+  # 后台登录的接口层：登录、取当前会话、退出三个接口，以及之后后台改数据接口共用的登录与 CSRF 依赖。
+  - id: INVENTORY-TASK-004
+    title: 管理员登录、退出与会话接口
+    purpose: >-
+      后台登录的接口层（后台登录设计补充第 5 节）：登录、取当前会话、退出三个接口，会话 cookie，来源地址的取法，
+      以及之后所有后台接口共用的须为已登录管理员与 CSRF 校验两个依赖。只调用 INVENTORY-TASK-002 的服务函数；不做登录页前端，
+      不改规则与服务层、数据模型、.platform/、CI、部署配置或设计文档，不装依赖。
+    status: ready
+    depends_on:
+      - INVENTORY-TASK-002
+    acceptance_criteria:
+      - 三个接口的方法、路径、请求、响应字段、状态码与错误码逐项符合设计 5.1；三种凭据失败的响应完全相同；本节列出的全部响应都带 Cache-Control no-store
+      - 登录接口按设计 5.1 的顺序判定：未配置数据库、跨站请求、媒体类型不是 JSON、请求体超过 4096 字节、请求体不合法、进行中的登录已满都在写登录尝试之前拒绝，422 不回显任何提交内容；认证经容量为 2 的限流器放进线程运行，等待不占线程与数据库连接；带着有效旧会话再登录时撤销旧会话
+      - 会话 cookie 的名字与属性符合设计 5.2，退出时以同名同属性清除
+      - 来源地址按设计 5.3：X-Real-IP 恰好一个且是合法地址时用它，否则用连接的对端地址，再没有时用 unknown；不读 X-Forwarded-For
+      - require_admin 与 require_admin_csrf 两个依赖按设计 5.4，用 Annotated 写法，返回含账号 id、用户名、会话 id 的操作者；退出接口使用 require_admin_csrf
+      - 接口在 app/api/admin_session.py，由 app/main.py 的 create_app 挂上；集成测试 tests/integration/test_admin_session_api.py 覆盖例子 A1 至 A8，用 Base.metadata 建表、测试结束删表，没有测试库时跳过需要数据库的用例；测试由 PR 的必需 CI 检查 integration 执行并通过
+      - 改动只落在 allowed_change_paths；不改 .platform/、CI、部署配置；不装依赖
+      - allowed_commands 里的检查全部零退出，skipped 如实报告且不算 passed；以 Draft PR 交付，不合并、不直推
+    allowed_change_paths:
+      - app/api/__init__.py
+      - app/api/admin_session.py
+      - app/main.py
+      - tests/integration/test_admin_session_api.py
+    allowed_commands:
+      - lint.check
+      - format.check
+    creates_branch: true
+    creates_pull_request: true
