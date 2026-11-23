@@ -26,7 +26,11 @@
 
 ## 3. 数据模型（INVENTORY-TASK-001）
 
-沿用 `app/db.py` 的 `Base` 与命名约定；时间一律是不带时区的 UTC（`DateTime`，Python 侧用 `datetime.now(UTC).replace(tzinfo=None)`）；指向账号的外键一律 `ON DELETE RESTRICT`。
+沿用 `app/db.py` 的 `Base` 与命名约定；指向账号的外键一律 `ON DELETE RESTRICT`。
+
+**时间**：一律是不带时区的 UTC、**精确到整秒**（`DateTime`，即 MySQL 的 `DATETIME`，不带小数秒）。规则层只从一处取当前时间：
+`datetime.now(UTC).replace(tzinfo=None, microsecond=0)`（截断，不四舍五入）；测试与调用方传入的时间也必须是整秒，带小数秒时报 `ValueError`。
+由此存进库的时间与算出来的时间完全相同，4.2 的窗口、4.4 的到期与 5.1 的 `expires_at` 不会差一秒。
 
 **`admin_accounts`**
 
@@ -80,11 +84,15 @@
 
 ### 4.1 用户名与密码
 
-- **用户名**：建号时按 `^[a-z0-9][a-z0-9._-]{2,31}$` 校验（3–32 个字符，小写字母、数字、`.`、`_`、`-`，首字符是字母或数字）；命令行输入先转小写再校验。登录时提交的用户名同样先转小写再查。
-- **密码**：长度 12–128 个字符（Python `len`），不做组成规则（不强制大小写、数字、符号）；转小写后不得等于用户名。不查常见弱口令表（单人或几人使用，靠长度与锁定）。
-- **哈希**：标准库 `hashlib.scrypt`，参数 N=2^14、r=8、p=5，16 字节随机盐，64 字节摘要；存成自描述字符串
+- **用户名**：合法用户名是 `^[a-z0-9][a-z0-9._-]{2,31}$`（3–32 个 ASCII 字符，小写字母、数字、`.`、`_`、`-`，首字符是字母或数字）。
+  命令行输入与登录时提交的用户名都先用 Python 的 `str.lower()` 转小写，得到「规范用户名」。建号时规范用户名不合法即拒绝。
+  **登录时规范用户名不合法就不查库**，直接按「用户名不存在」处理（4.3 第 2 步）。这样查库用的永远是纯 ASCII 小写串，MySQL 默认排序规则的大小写与重音不敏感（例如 `kélvin` 会匹配到 `kelvin`）用不上；
+  能匹配到同一账号的输入，规范用户名必然相同，`throttle_key`（4.2）也就相同，换写法拿不到新的尝试次数。
+- **密码**：长度 12–128 个字符（Python `len`，按码点计），不做组成规则（不强制大小写、数字、符号）；转小写后不得等于规范用户名。不查常见弱口令表（单人或几人使用，靠长度与锁定）。
+  送进 scrypt 的是密码的 UTF-8 字节，不做 Unicode 规范化；含无法按 UTF-8 编码的字符（孤立代理项）时，建号与改密拒绝，登录校验返回不通过。
+- **哈希**：标准库 `hashlib.scrypt`，参数 N=2^14、r=8、p=5，16 字节随机盐，64 字节摘要，`maxmem = 128 × 16 × 2^16 + 2^20` 字节（显式给出，接受的参数上限也能算）；存成自描述字符串
   `scrypt$n=16384,r=8,p=5$<盐 Base64url>$<摘要 Base64url>`（不带填充，不超过 255 个字符）。校验按串里记下的参数重算、`hmac.compare_digest` 比较；
-  串格式不合法、参数越界（N 不是 2 的幂或大于 2^16、r 或 p 大于 16）、计算失败时返回不通过，不抛异常。
+  串格式不合法、参数越界（N 不是大于 1 的 2 的幂或大于 2^16、r 或 p 大于 16）、盐不是 16 字节或摘要不是 64 字节、计算失败时返回不通过，不抛异常。
 - **假哈希**：固定的 `DUMMY_PASSWORD_HASH`（参数同上、盐与摘要全零字节），对任何密码都不通过。用户名不存在时照样对它校验一次，让两种失败的耗时相近。
 
 | 编号 | 输入 | 结果 |
@@ -96,7 +104,8 @@
 
 ### 4.2 登录失败锁定
 
-- `throttle_key = SHA-256 十六进制( 来源 + "\n" + 转小写后的提交用户名 )`，来源的取法见 5.3。
+- `throttle_key = SHA-256 十六进制( UTF-8( 来源 + "\n" + 规范用户名 ) )`，规范用户名见 4.1（合法与否都用它算），来源的取法见 5.3。
+  提交的用户名含无法按 UTF-8 编码的字符时，按 `errors="replace"` 编码后再算（只用于计数，不查库）。
 - **失败**指 `outcome` 为 `bad_password`、`unknown_user`、`disabled` 的尝试。`locked` 不算失败（被锁时继续尝试不会延长锁定），`success` 不清零。
 - 一次登录开始时，数同一 `throttle_key`、`occurred_at > 现在 − 60 分钟`（严格大于）的失败条数；**满 10 条即拒绝**：不查账号、不校验密码，写一条 `locked`，回答「已锁定」。
 - 锁定随最早的那条失败滑出 60 分钟窗口而自动解除，没有人工解锁命令；解除后照常校验密码。
@@ -110,26 +119,33 @@
 | L3 | 同 L1 | 10:15 来源 B 用正确密码登录 `kelvin` | 来源 B 的组合没有失败 → 成功 |
 | L4 | 来源 A 对不存在的用户名 `ghost` 失败 10 次 | 第 11 次来源 A 提交 `ghost` | `locked`；与 `kelvin` 已存在时的表现一致，不泄露用户名是否存在 |
 | L5 | 来源 A、`kelvin` 有 9 条失败、1 条 `success` | 再失败一次 | 失败满 10 条（`success` 不清零），下一次即锁定 |
+| L6 | 来源 A、`kelvin` 有 10 条失败 | 来源 A 提交 `KELVIN`、`kélvin` | `KELVIN` 的规范用户名是 `kelvin`，同一个 key → `locked`；`kélvin` 不合法、不查库，算作另一个 key 的 `unknown_user`，永远登录不进 `kelvin` |
 
 ### 4.3 一次登录（`authenticate`）
 
-输入：来源、提交的用户名、提交的密码、当前时间。在**一个数据库事务**里按顺序：
+`authenticate(db, *, source, username, password, now) -> LoginResult`：`db` 是调用方给的 SQLAlchemy `Session`，本函数在里面完成并**提交**一个事务。按顺序：
 
 1. 算 `throttle_key`；按 4.2 数失败，满 10 条 → 写 `locked`（`admin_account_id` 为空），提交，返回「已锁定」。
-2. 按转小写后的用户名查账号。没有 → 对 `DUMMY_PASSWORD_HASH` 校验一次，写 `unknown_user`（`admin_account_id` 为空），提交，返回「凭据无效」。
+2. 规范用户名不合法（4.1），或按它查不到账号 → 对 `DUMMY_PASSWORD_HASH` 校验一次，写 `unknown_user`（`admin_account_id` 为空），提交，返回「凭据无效」。
 3. 校验密码。不通过 → 写 `bad_password`（带账号 id），提交，返回「凭据无效」。
 4. 账号已停用 → 写 `disabled`（带账号 id），提交，返回「凭据无效」（与密码错误不可区分；先校验密码再看停用，耗时一致）。
 5. 建会话（4.4），写 `success`（带账号 id），提交，返回账号与会话令牌原文。
 
 每次调用恰好写一条登录尝试。
 
+`LoginResult` 是不可变的数据类：`outcome`（`"success"`、`"invalid_credentials"`、`"locked"` 之一）；成功时另有 `account_id`、`username`、`session_id`、`token`（会话令牌原文）、`expires_at`，失败时这几项为 `None`。
+它的 `repr` 不含 `token`（字段声明 `repr=False`）。数据库出错（`SQLAlchemyError`）时回滚并原样抛出，由调用方处理。
+
 ### 4.4 会话与 CSRF
 
 - **令牌**：`secrets.token_urlsafe(32)`；库里只存它的 SHA-256 十六进制（`token_hash`）；原文只在登录成功时返回一次。
 - **有效期**：自登录起 **12 小时**绝对到期，使用中不延长。
-- **解析**（`resolve_session`）：按 `token_hash` 找会话；`revoked_at` 为空、`expires_at > 现在`、账号 `disabled_at` 为空，三条都成立才有效，否则当作没有会话。
-- **撤销**：退出时把该会话的 `revoked_at` 设为现在；已撤销的再撤销不改原值。重设密码、停用账号时撤销该账号**全部**未撤销的会话（与改账号在同一事务）。
-- **CSRF 令牌**：`HMAC-SHA256(key=会话令牌原文的 UTF-8 字节, msg=b"inventory-admin-csrf")` 的十六进制，**不入库**，随时可由 cookie 里的会话令牌重算；校验用 `hmac.compare_digest`。浏览器脚本读不到 HttpOnly 的会话 cookie，只能从接口响应拿到 CSRF 令牌。
+- **解析**：`resolve_session(db, *, token, now) -> ActiveSession | None`。按 `token_hash` 找会话；`revoked_at` 为空、`expires_at > 现在`、账号 `disabled_at` 为空，三条都成立才返回
+  `ActiveSession(session_id, account_id, username, expires_at)`（不可变数据类），否则返回 `None`。`token` 为空串或不是字符串时直接返回 `None`。只读，不提交。
+- **撤销**：`revoke_session(db, *, session_id, now) -> None`，把该会话的 `revoked_at` 设为现在并提交；已撤销的再撤销不改原值。重设密码、停用账号时撤销该账号**全部**未撤销的会话（与改账号在同一事务）。
+- **CSRF 令牌**：`csrf_token_for(token) -> str`，`HMAC-SHA256(key=会话令牌原文的 UTF-8 字节, msg=b"inventory-admin-csrf")` 的十六进制，**不入库**，随时可由 cookie 里的会话令牌重算；
+  `csrf_token_matches(token, presented) -> bool` 用 `hmac.compare_digest` 比较，`presented` 为空或不是字符串时为 `False`。浏览器脚本读不到 HttpOnly 的会话 cookie，只能从接口响应拿到 CSRF 令牌。
+- 以上函数与 `authenticate` 都在 `app/services/admin_auth.py`，接口层（第 5 节）只调用它们，不另写查询。
 
 | 编号 | 操作前 | 操作 | 结果 |
 | --- | --- | --- | --- |
@@ -144,13 +160,16 @@
 
 | 子命令 | 做什么 |
 | --- | --- |
-| `create-account` | 校验用户名（4.1）；用户名已存在则报错。密码用 `getpass` 不回显地输入两次，不一致或不合 4.1 则报错。写入账号，`created_at` 与 `password_updated_at` 为现在 |
-| `reset-password` | 账号必须存在；同样两次输入新密码；更新哈希与 `password_updated_at`，撤销该账号全部会话 |
-| `disable-account` | 账号必须存在；已停用则提示后正常退出、不改值；否则设 `disabled_at` 为现在并撤销全部会话 |
-| `enable-account` | 账号必须存在；把 `disabled_at` 清空；不恢复已撤销的会话 |
+| `create-account` | 先校验用户名（4.1）并查库，已存在则报错——都在提示输入密码**之前**。密码用 `getpass` 不回显地输入两次，不一致或不合 4.1 则报错。写入账号，`created_at` 与 `password_updated_at` 为现在 |
+| `reset-password` | 先查账号必须存在，再同样两次输入新密码；更新哈希与 `password_updated_at`，撤销该账号全部会话 |
+| `disable-account` | 账号必须存在；已停用则输出「已是停用状态」、退出码 0、不改值；否则设 `disabled_at` 为现在并撤销全部会话 |
+| `enable-account` | 账号必须存在；未停用则输出「已是启用状态」、退出码 0、不改值；否则把 `disabled_at` 清空；不恢复已撤销的会话 |
 
-- 密码只经交互输入，不接受命令行参数或环境变量。成功退出码 0，业务错误（用户名不合法、已存在、不存在、密码不合规、两次不一致）退出码 1，错误消息不含密码。
-- 命令输出只有用户名与结果，不打印哈希。
+- 入口是 `main(argv: list[str] | None = None) -> int`，`if __name__ == "__main__": sys.exit(main())`；测试直接调 `main([...])`，替换 `getpass.getpass` 提供输入。
+- 密码只经交互输入，不接受命令行参数或环境变量。
+- **退出码**：0 成功（含上面两种「已是……状态」）；1 业务错误或取消——用户名不合法、已存在（含并发建号撞上唯一约束的 `IntegrityError`）、不存在、密码不合规、两次不一致、输入密码时遇到 EOF 或 Ctrl+C（输出「已取消」，什么都不写）；
+  2 运行环境错误——没设 `INVENTORY_DATABASE_URL`、连不上数据库、表不存在或其他 `SQLAlchemyError`（输出「数据库错误」加异常类名，不输出连接串）。参数不对由 `argparse` 处理（它自己的退出码 2）。
+- 消息写到标准错误，成功结果写到标准输出；输出只有用户名与结果，不打印密码或哈希。
 
 ## 5. 接口（INVENTORY-TASK-003）
 
@@ -158,13 +177,16 @@
 
 | 方法与路径 | 需要 | 成功 | 失败 |
 | --- | --- | --- | --- |
-| `POST /api/v1/admin/session` | 请求体 `{"username": <1–64 个字符>, "password": <1–256 个字符>}` | 200 `{"username", "expires_at", "csrf_token"}`，并设会话 cookie | 401 `{"detail": "invalid_credentials"}`（用户名不存在、密码错误、账号停用三种不可区分）；429 `{"detail": "login_locked"}`；请求体不合法 422（框架默认） |
+| `POST /api/v1/admin/session` | 请求体 `{"username": <1–64 个字符>, "password": <1–256 个字符>}` | 200 `{"username", "expires_at", "csrf_token"}`，并设会话 cookie | 401 `{"detail": "invalid_credentials"}`（用户名不存在、密码错误、账号停用三种不可区分）；429 `{"detail": "login_locked"}`；请求体不合法 422 `{"detail": "invalid_request"}`（见下） |
 | `GET /api/v1/admin/session` | 有效会话 cookie | 200 `{"username", "expires_at", "csrf_token"}` | 401 `{"detail": "not_authenticated"}` |
 | `DELETE /api/v1/admin/session` | 有效会话 cookie ＋ 请求头 `X-CSRF-Token` | 204，撤销会话并清除 cookie | 401 `not_authenticated`；403 `{"detail": "csrf_failed"}` |
 
-- `expires_at` 用 ISO 8601 UTC，带 `Z` 后缀，精确到秒。
-- 三个接口的响应都带 `Cache-Control: no-store`。
-- 未配置数据库（`database_url` 为空）时三个接口都回答 503 `{"detail": "database_not_configured"}`，与 `/readyz` 一致。
+- `expires_at` 用 ISO 8601 UTC，形如 `2026-11-23T20:00:00Z`（库里本就是整秒，见第 3 节，原样格式化，不再取整）。
+- **登录请求体不用框架默认的 422**：FastAPI 默认的校验错误会把提交的值（含密码）放进响应的 `input` 字段。登录接口自己读请求体（`await request.body()` 后 `json.loads`）并逐项检查：
+  不是 JSON 对象、缺 `username` 或 `password`、不是字符串、长度不在上表范围内，一律 422 `{"detail": "invalid_request"}`，不回显任何提交内容。多出来的字段忽略。
+- 三个接口的**所有**响应（含 401、403、422、429、503）都带 `Cache-Control: no-store`。
+- 未配置数据库（`database_url` 为空）时三个接口都回答 503 `{"detail": "database_not_configured"}`；处理中数据库出错（`SQLAlchemyError`）时回答 503 `{"detail": "database_unreachable"}`，与 `/readyz` 的两个原因一致，响应不含异常内容。
+- 每个请求用一个 SQLAlchemy `Session`（由 `create_app` 里已有的 engine 建 `sessionmaker`），请求结束关闭。
 - 已登录时再登录：照常建新会话，旧会话不动（到期或退出时失效）。
 
 ### 5.2 会话 cookie
@@ -175,8 +197,19 @@ TLS 在边缘反向代理终止，浏览器看到的是 HTTPS，所以 `Secure` 
 ### 5.3 来源地址
 
 沿用 acuven-shop 的取法：请求头 `X-Real-IP` **恰好一个**、且是合法的 IPv4 或 IPv6 地址时用它（规范化后的文本）；缺失、出现多次、不合法时退回连接的对端地址；再没有时用 `unknown`。
-不用 `X-Forwarded-For`（访客能在前面追加伪造的地址）。上线前由运营者确认边缘反向代理给本站的 vhost **覆盖设置** `X-Real-IP $remote_addr`（共享基建其他 vhost 已是这样）；
-没设置时所有人共享代理的地址，锁定只会更严、不会放开，但别处的来源也会被一起锁住。
+不用 `X-Forwarded-For`（访客能在前面追加伪造的地址）。
+
+按来源锁定**依赖一个部署前提**：边缘反向代理给本站的 vhost 用 `proxy_set_header X-Real-IP $remote_addr` **覆盖**这个头（共享基建其他 vhost 已是这样）。三种情形：
+
+| 代理的做法 | 结果 |
+| --- | --- |
+| 覆盖设置（要求的做法） | 来源是访客的真实地址，锁定按设计工作 |
+| 不设置这个头 | 所有访客共用代理的地址：锁定更严，但别处的来源也会被一起锁住 |
+| 把访客自己送来的头原样转进来 | **锁定可被绕过**：攻击者每次换一个头的值就是一个新的 key |
+
+- 所以「本站 vhost 覆盖设置 `X-Real-IP`」是上线前提，由运营者在开通子域名时确认，并从外网用一个伪造的 `X-Real-IP` 头试登录失败几次、在库里看到 key 没有随头变化（之后的上线检查记录）。
+- 本服务不发布端口，只挂在共享的代理网络上；同一网络里的其他容器能绕过代理直接带任意头访问。那些都是 Acuven 自己的服务，这条残余风险接受（要 Kelvin 确认，第 7 节）。
+- 本仓库的代码无法判断代理有没有覆盖这个头，所以不做「只信任某个代理地址」的配置。
 
 ### 5.4 供之后后台接口用的依赖
 
@@ -206,7 +239,9 @@ TLS 在边缘反向代理终止，浏览器看到的是 HTTPS，所以 `Secure` 
 | 登录记录 | 审计表只记已有账号的尝试 | 每次尝试一条，用户名不存在的也记（不存用户名原文） | V1_MINIMAL_DESIGN 第 10 节「记录异常尝试」 |
 | 停用 | 无 | `disable-account` / `enable-account` | REQUIREMENTS 第 5 节「支持立即停用账号」 |
 | CSRF 令牌 | 会话响应里给 | 同样在响应里给，由会话令牌 HMAC 导出、不入库 | 少一列，页面刷新后 `GET` 能重新拿到 |
+| 来源头的残余风险 | 同样依赖代理覆盖 `X-Real-IP` | 同左；另把它写成上线前提，并接受共享代理网络里其他容器能直接带头访问 | 5.3 |
 
 ## 8. 修订记录
 
-- **0.1**（2026-11-23）：草案。
+- **0.1**（2026-11-23）：草案。同日按三个任务的设计预审补齐：时间截断到整秒；登录时规范用户名不合法即不查库（避开 MySQL 排序规则的大小写与重音不敏感）；
+  密码的编码与 scrypt 的 `maxmem`；账号命令的退出码与先校验后提示；服务函数的签名与返回值；登录请求体不回显提交值的 422；数据库出错时的 503；来源头的部署前提与残余风险。

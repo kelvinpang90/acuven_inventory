@@ -113,7 +113,7 @@ tasks:
       - 用户名与密码规则、哈希格式与校验、假哈希按设计 4.1 实现，在 app/domain/pw_hash.py；单元测试 tests/unit/test_pw_hash.py 覆盖例子 P1 至 P4
       - 锁定按设计 4.2：同一来源与用户名在过去 60 分钟内（严格大于）失败满 10 次即拒绝且不查账号、不校验密码；locked 不算失败，success 不清零；throttle_key 的算法与窗口判定在 app/domain/login_throttle.py，单元测试 tests/unit/test_login_throttle.py 覆盖窗口边界
       - 登录、会话解析、退出与撤销按设计 4.3 与 4.4 在 app/services/admin_auth.py 实现：每次登录恰好写一条尝试记录，五种结果各有测试；会话 12 小时绝对到期、不续期，库里只存令牌的 SHA-256；CSRF 令牌由会话令牌导出、不入库
-      - 集成测试 tests/integration/test_admin_auth_service.py 对真 MySQL 覆盖例子 L1 至 L5 与 S1 至 S4，时间由参数传入、不依赖真实时钟
+      - 集成测试 tests/integration/test_admin_auth_service.py 对真 MySQL 覆盖例子 L1 至 L6 与 S1 至 S4，时间由参数传入且是整秒、不依赖真实时钟；登录时规范用户名不合法不查库
       - 账号命令按设计 4.5 在 app/admin.py：create-account、reset-password、disable-account、enable-account 四个子命令，密码只经不回显的两次交互输入，退出码与设计一致；重设密码与停用撤销该账号全部未撤销会话；集成测试 tests/integration/test_admin_cli.py 覆盖每个子命令的成功与一种失败
       - 密码、会话令牌、CSRF 令牌与密码哈希不出现在日志、异常消息与命令输出里
       - 单元测试由 PR 的必需 CI 检查 unit 执行、集成测试由 integration 执行，均通过；改动只落在 allowed_change_paths；不改 .platform/、CI、部署配置；不装依赖
@@ -145,7 +145,7 @@ tasks:
     depends_on:
       - INVENTORY-TASK-002
     acceptance_criteria:
-      - 三个接口的方法、路径、请求体、响应字段、状态码与错误码逐项符合设计 5.1；三种凭据失败的响应完全相同；响应都带 Cache-Control no-store；未配置数据库时回答 503 database_not_configured
+      - 三个接口的方法、路径、请求体、响应字段、状态码与错误码逐项符合设计 5.1；三种凭据失败的响应完全相同；登录请求体不合法时回答 422 invalid_request 且不回显任何提交内容；所有响应都带 Cache-Control no-store；未配置数据库时回答 503 database_not_configured，数据库出错时回答 503 database_unreachable
       - 会话 cookie 的名字与属性符合设计 5.2，退出时以同名同属性清除
       - 来源地址按设计 5.3：X-Real-IP 恰好一个且是合法地址时用它，否则用连接的对端地址，再没有时用 unknown；不读 X-Forwarded-For
       - require_admin 与 require_admin_csrf 两个依赖按设计 5.4，返回含账号 id、用户名、会话 id 的操作者；退出接口使用 require_admin_csrf
