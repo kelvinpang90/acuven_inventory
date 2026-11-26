@@ -1,5 +1,7 @@
 # acuven_inventory
 
+> **已并入 Acuven Stock Core，本仓库归档、不再开发**（2026-11-26）。2026-11-23 Kelvin 定把 Inventory 深度融合进 `acuven_stock_core`（acuven_hub `DECISIONS.md` C-21；Core 契约 0.22）：两个自营店铺是 Core 的平台入口，配额、安全库存、平台订单事件与后台都在 Core 里实现，设计见那个仓库的 `docs/PLATFORM_CHANNELS.md`。本仓库的 INVENTORY-TASK-001～004 不再实现；生产部署已撤下。下面是归档前的原文，仅供查阅。
+
 **Acuven Inventory** 是可独立交付的多销售入口库存控制产品：在随附共用商品目录和基础库存账上管理渠道映射、安全库存/份额政策、预留协调、平台发布和对账。第一试点为 Acuven 单池/单地点、真实 Shop 与获权平台；完整订单、资金和顾客资料在原业务系统。
 
 2026-11-21 从项目模板起步：后端服务骨架（健康检查、就绪检查、两个平台授权回调的固定地址，授权尚未实现）、CI、`deploy.yml`、`.platform/`；还没有业务功能，也还没有编号任务。
